@@ -1,3 +1,6 @@
+
+Copy
+
 // KAIZER MODE 3 — Cutter + Transcriber v2.1
 // POST /transcribe — calls Python Sarvam SDK (full file, no chunking)
 // POST /cut        — FFmpeg frame-accurate cuts + 9:16 + captions
