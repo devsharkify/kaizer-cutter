@@ -1,261 +1,266 @@
-// ============================================================
-// KAIZER MODE 3 — FFmpeg Cutter Service
-// Deploy on Railway. Accepts raw video upload + clip timestamps.
-// Cuts highlights with frame-accurate FFmpeg, returns merged MP4.
-// ============================================================
+// KAIZER MODE 3 — Cutter + Transcriber v2.0
+// POST /transcribe — Sarvam Batch API (full file, no chunking)
+// POST /cut        — FFmpeg frame-accurate cuts + 9:16 + captions
+// GET  /download/:token
  
-const express = require('express');
-const multer  = require('multer');
-const cors    = require('cors');
-const ffmpeg  = require('fluent-ffmpeg');
-const fs      = require('fs');
-const path    = require('path');
+const express  = require('express');
+const multer   = require('multer');
+const cors     = require('cors');
+const ffmpeg   = require('fluent-ffmpeg');
+const fs       = require('fs');
+const path     = require('path');
+const fetch    = require('node-fetch');
+const FormData = require('form-data');
 const { execSync } = require('child_process');
  
 const app  = express();
 const PORT = process.env.PORT || 3000;
- 
-// ── CORS: allow all origins (Mode 3 runs from file:// or any host) ──
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
  
-// ── Temp storage for uploads ──
 const TMP = '/tmp/kaizer';
 fs.mkdirSync(TMP, { recursive: true });
  
 const storage = multer.diskStorage({
   destination: TMP,
-  filename: (req, file, cb) => cb(null, `input_${Date.now()}.mp4`)
+  filename: (req, file, cb) => cb(null, `upload_${Date.now()}`)
 });
-const upload = multer({
-  storage,
-  limits: { fileSize: 600 * 1024 * 1024 } // 600MB
-});
+const upload = multer({ storage, limits: { fileSize: 600 * 1024 * 1024 } });
+const pendingDownloads = new Map();
  
-// ── Health check ──
+// Health
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', service: 'kaizer-cutter', version: '1.0' });
+  const htmlPath = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(htmlPath)) return res.sendFile(htmlPath);
+  res.json({ status: 'ok', service: 'kaizer-cutter', version: '2.0' });
 });
+app.use(express.static(path.join(__dirname, 'public')));
  
-// ── MAIN ENDPOINT: POST /cut ──
-// Body: multipart/form-data
-//   file: video file
-//   clips: JSON string [{start_sec, end_sec, label}]
-//   preroll: seconds to add before each clip start (default 1.5)
-//
-// Returns: { downloadUrl, clips: [{index, start, end, duration}] }
+// ================================================================
+// POST /transcribe
+// ================================================================
+app.post('/transcribe', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  const sarvamKey = req.body.sarvamKey || req.headers['x-sarvam-key'];
+  if (!sarvamKey) { try{fs.unlinkSync(req.file.path);}catch(e){} return res.status(400).json({ error: 'sarvamKey required' }); }
  
-app.post('/cut', upload.single('file'), async (req, res) => {
-  const startTime = Date.now();
- 
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
-  }
- 
-  let clips;
-  try {
-    clips = JSON.parse(req.body.clips || '[]');
-  } catch(e) {
-    return res.status(400).json({ error: 'Invalid clips JSON: ' + e.message });
-  }
- 
-  if (!clips.length) {
-    return res.status(400).json({ error: 'No clips provided' });
-  }
- 
-  const preroll  = parseFloat(req.body.preroll || '4.0');
-  const tail     = parseFloat(req.body.tail || '1.5');
-  const ratio    = req.body.ratio || '16:9';        // '16:9' | '9:16'
-  const captions = req.body.captions === '1';
-  let captionData = [];
-  if (captions && req.body.captionData) {
-    try { captionData = JSON.parse(req.body.captionData); } catch(e) {}
-  }
- 
-  const jobId      = Date.now();
-  const is916 = ratio === '9:16';
-  const outW = is916 ? 540 : 960;
-  const outH = is916 ? 960 : 540;
- 
-  console.log(`[${jobId}] ${clips.length} clips | ratio:${ratio} | captions:${captions} | preroll:${preroll}s | tail:${tail}s`);
-  const segFiles  = [];
-  const results   = [];
- 
-  console.log(`[${jobId}] Cutting ${clips.length} clips from ${req.file.originalname} (${(req.file.size/1024/1024).toFixed(1)}MB), preroll=${preroll}s`);
+  const language  = req.body.language || 'te-IN';
+  const jobId     = Date.now();
+  const inputFile = req.file.path;
+  console.log(`[${jobId}] TRANSCRIBE: ${(req.file.size/1024/1024).toFixed(1)}MB`);
  
   try {
-    // Get video duration
-    const duration = await getVideoDuration(inputFile);
-    console.log(`[${jobId}] Video duration: ${duration.toFixed(1)}s`);
+    // Extract 16kHz mono WAV
+    const audioPath = path.join(TMP, `audio_${jobId}.wav`);
+    await extractAudio(inputFile, audioPath);
  
-    // Cut each clip
-    for (let i = 0; i < clips.length; i++) {
-      const clip = clips[i];
-      const start = Math.max(0, clip.start_sec - preroll);
-      const end   = Math.min(duration, clip.end_sec + tail);
-      const dur   = end - start;
- 
-      const segPath = path.join(TMP, `seg_${jobId}_${i}.mp4`);
-      console.log(`[${jobId}] Clip ${i+1}/${clips.length}: ${start.toFixed(2)}s → ${end.toFixed(2)}s (${dur.toFixed(1)}s)`);
- 
-      // Build FFmpeg filter chain
-      let vfFilters = [];
- 
-      // 9:16 crop: scale to fill height, crop to portrait
-      if (is916) {
-        vfFilters.push(`scale=${outW * 2}:-1`);
-        vfFilters.push(`crop=${outW}:${outH}`);
-      } else {
-        vfFilters.push(`scale=${outW}:${outH}`);
-      }
- 
-      // Caption burn-in using drawtext
-      if (captions && captionData[i] && captionData[i].text) {
-        const text = captionData[i].text
-          .replace(/'/g, "\u2019")  // replace single quotes for ffmpeg
-          .replace(/:/g, '\\:')
-          .replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-        const fontSize = is916 ? 36 : 24;
-        const yPos = is916 ? `h-160` : `h-80`;
-        vfFilters.push(
-          `drawbox=y=${yPos}:color=black@0.75:width=iw:height=${is916?140:70}:t=fill`,
-          `drawtext=fontfile=/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf:` +
-          `text='${text}':fontsize=${fontSize}:fontcolor=white:` +
-          `x=(w-text_w)/2:y=${yPos}+20:line_spacing=8`
-        );
-      }
- 
-      const vfArg = vfFilters.join(',');
- 
-      await cutClip(inputFile, segPath, start, dur, vfArg);
-      segFiles.push(segPath);
-      results.push({ index: i, start, end, duration: dur });
-    }
- 
-    // Merge all clips
-    const outputPath = path.join(TMP, `merged_${jobId}.mp4`);
- 
-    if (segFiles.length === 1) {
-      fs.copyFileSync(segFiles[0], outputPath);
-    } else {
-      await mergeClips(segFiles, outputPath);
-    }
- 
-    const outputSize = fs.statSync(outputPath).size;
-    const elapsed    = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`[${jobId}] Done in ${elapsed}s — ${(outputSize/1024/1024).toFixed(1)}MB`);
- 
-    // Serve via download endpoint
-    const token = `${jobId}`;
- 
-    // Schedule cleanup after 10 min
-    setTimeout(() => {
-      try { fs.unlinkSync(outputPath); } catch(e) {}
-      segFiles.forEach(f => { try { fs.unlinkSync(f); } catch(e) {} });
-      try { fs.unlinkSync(inputFile); } catch(e) {}
-      console.log(`[${token}] Cleaned up temp files`);
-    }, 10 * 60 * 1000);
- 
-    res.json({
-      success: true,
-      downloadUrl: `/download/${token}`,
-      sizeMB: (outputSize / 1024 / 1024).toFixed(1),
-      elapsedSec: elapsed,
-      clips: results,
-      _outputPath: outputPath // stored server-side for /download endpoint
+    // Create Sarvam batch job
+    const cr = await fetch('https://api.sarvam.ai/speech-to-text/batch/jobs', {
+      method: 'POST',
+      headers: { 'api-subscription-key': sarvamKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'saaras:v3', mode: 'transcribe', language_code: language, with_diarization: true, num_speakers: 5 })
     });
+    if (!cr.ok) throw new Error(`Create job: ${cr.status} ${await cr.text()}`);
+    const crData = await cr.json();
+    const sJobId = crData.job_id || crData.id;
+    console.log(`[${jobId}] Sarvam job: ${sJobId}`);
  
-    // Store path for download (simple in-memory map)
-    pendingDownloads.set(token, outputPath);
+    // Upload audio
+    const fd = new FormData();
+    fd.append('files', fs.createReadStream(audioPath), { filename: 'audio.wav', contentType: 'audio/wav' });
+    const ur = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}/files`, {
+      method: 'POST', headers: { 'api-subscription-key': sarvamKey, ...fd.getHeaders() }, body: fd
+    });
+    if (!ur.ok) throw new Error(`Upload: ${ur.status} ${await ur.text()}`);
+ 
+    // Start job
+    const sr = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}/start`, {
+      method: 'POST', headers: { 'api-subscription-key': sarvamKey }
+    });
+    if (!sr.ok) throw new Error(`Start: ${sr.status} ${await sr.text()}`);
+    console.log(`[${jobId}] Polling...`);
+ 
+    // Poll
+    let result = null;
+    for (let i = 0; i < 120; i++) {
+      await sleep(5000);
+      const pr = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}`, {
+        headers: { 'api-subscription-key': sarvamKey }
+      });
+      const pd = await pr.json();
+      const state = (pd.state || pd.status || '').toUpperCase();
+      console.log(`[${jobId}] Poll ${i+1}: ${state}`);
+      if (['COMPLETED','SUCCESS','DONE'].includes(state)) { result = pd; break; }
+      if (['FAILED','ERROR'].includes(state)) throw new Error(`Job failed: ${JSON.stringify(pd)}`);
+    }
+    if (!result) throw new Error('Timeout');
+ 
+    // Get output
+    let segments = [], transcript = '';
+    const fr = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}/files`, {
+      headers: { 'api-subscription-key': sarvamKey }
+    });
+    if (fr.ok) {
+      const fd2 = await fr.json();
+      const done = (fd2.files||[]).filter(f => ['SUCCESS','COMPLETED','DONE'].includes((f.state||f.status||'').toUpperCase()));
+      for (const file of done) {
+        if (file.output_url) {
+          const od = await (await fetch(file.output_url)).json();
+          segments = parseSarvam(od);
+          transcript = od.transcript || segments.map(s=>s.text).join(' ');
+        }
+      }
+    }
+    if (!segments.length) { segments = parseSarvam(result); transcript = result.transcript||''; }
+ 
+    [audioPath, inputFile].forEach(f => { try{fs.unlinkSync(f);}catch(e){} });
+    console.log(`[${jobId}] Done: ${segments.length} segments`);
+    res.json({ success: true, segments, transcript, sarvamJobId: sJobId });
  
   } catch(err) {
+    try{fs.unlinkSync(inputFile);}catch(e){}
     console.error(`[${jobId}] Error:`, err.message);
-    // Cleanup
-    segFiles.forEach(f => { try { fs.unlinkSync(f); } catch(e) {} });
-    try { fs.unlinkSync(inputFile); } catch(e) {}
     res.status(500).json({ error: err.message });
   }
 });
  
-// ── DOWNLOAD ENDPOINT ──
-const pendingDownloads = new Map();
- 
-app.get('/download/:token', (req, res) => {
-  const outputPath = pendingDownloads.get(req.params.token);
-  if (!outputPath || !fs.existsSync(outputPath)) {
-    return res.status(404).json({ error: 'File not found or expired' });
+function parseSarvam(data) {
+  if (data.diarized_transcript?.entries?.length) {
+    return data.diarized_transcript.entries.map(e => ({
+      start: e.start_time_seconds||0, end: e.end_time_seconds||0,
+      text: e.transcript||'', speaker: `SPK${e.speaker_id||'0'}`
+    })).filter(s=>s.text.trim());
   }
-  const filename = `kaizer_highlights_${req.params.token}.mp4`;
-  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.setHeader('Content-Type', 'video/mp4');
-  res.sendFile(outputPath);
-});
- 
-// ── HELPERS ──
- 
-function getVideoDuration(filePath) {
-  return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(filePath, (err, metadata) => {
-      if (err) return reject(err);
-      resolve(metadata.format.duration || 0);
+  if (data.timestamps?.words?.length) {
+    const words=data.timestamps.words, starts=data.timestamps.start_time_seconds||[], ends=data.timestamps.end_time_seconds||[];
+    const segs=[]; let seg={start:null,end:null,words:[]};
+    words.forEach((w,i)=>{
+      if(seg.start===null) seg.start=starts[i]||0;
+      seg.words.push(w); seg.end=ends[i]||0;
+      if(seg.words.length>=10||i===words.length-1){
+        segs.push({start:seg.start,end:seg.end,text:seg.words.join(' '),speaker:'SPK0'});
+        seg={start:null,end:null,words:[]};
+      }
     });
-  });
+    return segs.filter(s=>s.text.trim());
+  }
+  if (data.transcript) {
+    return data.transcript.split(/[।.!?\n]+/).filter(s=>s.trim()).map((text,i)=>({
+      start:i*10, end:(i+1)*10, text:text.trim(), speaker:'SPK0'
+    }));
+  }
+  return [];
 }
  
-function cutClip(input, output, startSec, durationSec, vfArg) {
-  return new Promise((resolve, reject) => {
-    const cmd = ffmpeg(input)
-      .setStartTime(startSec)
-      .setDuration(durationSec);
+// ================================================================
+// POST /cut
+// ================================================================
+app.post('/cut', upload.single('file'), async (req, res) => {
+  const startTime = Date.now();
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  let clips;
+  try { clips = JSON.parse(req.body.clips||'[]'); } catch(e) { return res.status(400).json({error:'Bad clips JSON'}); }
+  if (!clips.length) return res.status(400).json({ error: 'No clips' });
  
-    if (vfArg) {
-      cmd.videoFilter(vfArg);
-      cmd.outputOptions(['-c:v libx264', '-c:a aac', '-preset ultrafast', '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart']);
-    } else {
-      cmd.outputOptions(['-c:v libx264', '-c:a aac', '-preset ultrafast', '-avoid_negative_ts', 'make_zero', '-movflags', '+faststart']);
+  const jobId    = Date.now();
+  const inputFile = req.file.path;
+  const preroll  = parseFloat(req.body.preroll||'4.0');
+  const tail     = parseFloat(req.body.tail||'1.5');
+  const ratio    = req.body.ratio||'16:9';
+  const captions = req.body.captions==='1';
+  let capData = [];
+  if (captions && req.body.captionData) { try{capData=JSON.parse(req.body.captionData);}catch(e){} }
+ 
+  const is916 = ratio==='9:16';
+  const outW = is916?540:960, outH = is916?960:540;
+  console.log(`[${jobId}] CUT: ${clips.length} clips | ${ratio} | captions:${captions}`);
+ 
+  const segFiles=[], results=[];
+  try {
+    const duration = await getVideoDuration(inputFile);
+    for (let i=0; i<clips.length; i++) {
+      const c = clips[i];
+      const start = Math.max(0, c.start_sec - preroll);
+      const end   = Math.min(duration, c.end_sec + tail);
+      const segPath = path.join(TMP, `seg_${jobId}_${i}.mp4`);
+      console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}s→${end.toFixed(1)}s`);
+ 
+      let vf = [];
+      if (is916) { vf.push(`scale=${outW*2}:-2`, `crop=${outW}:${outH}`); }
+      else { vf.push(`scale=${outW}:${outH}`); }
+      if (captions && capData[i]?.text) {
+        const txt = capData[i].text.replace(/[':]/g,' ').replace(/\[|\]/g,'');
+        const fs2=is916?36:24, boxY=`h-${is916?150:80}`, boxH=is916?130:70;
+        vf.push(`drawbox=y=${boxY}:color=black@0.75:width=iw:height=${boxH}:t=fill`);
+        vf.push(`drawtext=fontfile=/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf:text='${txt}':fontsize=${fs2}:fontcolor=white:x=(w-text_w)/2:y=${boxY}+18:line_spacing=8`);
+      }
+ 
+      await cutClip(inputFile, segPath, start, end-start, vf.join(','));
+      segFiles.push(segPath);
+      results.push({ index:i, start, end, duration:end-start });
     }
  
-    cmd.output(output)
-      .on('end', resolve)
-      .on('error', reject)
-      .run();
-  });
-}
+    const outputPath = path.join(TMP, `merged_${jobId}.mp4`);
+    if (segFiles.length===1) fs.copyFileSync(segFiles[0], outputPath);
+    else await mergeClips(segFiles, outputPath);
  
-function mergeClips(segFiles, output) {
-  return new Promise((resolve, reject) => {
-    // Write concat list
-    const concatFile = output + '.txt';
-    const lines = segFiles.map(f => `file '${f}'`).join('\n');
-    fs.writeFileSync(concatFile, lines);
+    const sizeMB  = (fs.statSync(outputPath).size/1024/1024).toFixed(1);
+    const elapsed = ((Date.now()-startTime)/1000).toFixed(1);
+    const token   = `${jobId}`;
+    pendingDownloads.set(token, outputPath);
+    setTimeout(()=>{ [outputPath,inputFile,...segFiles].forEach(f=>{try{fs.unlinkSync(f);}catch(e){}}); pendingDownloads.delete(token); }, 10*60*1000);
  
-    ffmpeg()
-      .input(concatFile)
-      .inputOptions(['-f', 'concat', '-safe', '0'])
-      .outputOptions([
-        '-c', 'copy',
-        '-movflags', '+faststart'
-      ])
-      .output(output)
-      .on('end', () => {
-        try { fs.unlinkSync(concatFile); } catch(e) {}
-        resolve();
-      })
-      .on('error', (err) => {
-        try { fs.unlinkSync(concatFile); } catch(e) {}
-        reject(err);
-      })
-      .run();
-  });
-}
+    console.log(`[${jobId}] Done: ${elapsed}s ${sizeMB}MB`);
+    res.json({ success:true, downloadUrl:`/download/${token}`, sizeMB, elapsedSec:elapsed, clips:results });
  
-app.listen(PORT, () => {
-  console.log(`Kaizer Cutter running on port ${PORT}`);
-  // Check FFmpeg available
-  try {
-    const v = execSync('ffmpeg -version 2>&1').toString().split('\n')[0];
-    console.log('FFmpeg:', v);
-  } catch(e) {
-    console.warn('FFmpeg not found in PATH — install it in Dockerfile');
+  } catch(err) {
+    [inputFile,...segFiles].forEach(f=>{try{fs.unlinkSync(f);}catch(e){}});
+    console.error(`[${jobId}] Error:`, err.message);
+    res.status(500).json({ error: err.message });
   }
+});
+ 
+app.get('/download/:token', (req,res)=>{
+  const p = pendingDownloads.get(req.params.token);
+  if (!p||!fs.existsSync(p)) return res.status(404).json({error:'Expired'});
+  res.setHeader('Content-Disposition',`attachment; filename="kaizer_${req.params.token}.mp4"`);
+  res.setHeader('Content-Type','video/mp4');
+  res.sendFile(p);
+});
+ 
+function extractAudio(inp,out) {
+  return new Promise((resolve,reject)=>{
+    ffmpeg(inp).noVideo().audioChannels(1).audioFrequency(16000).audioCodec('pcm_s16le')
+      .output(out).on('end',resolve).on('error',reject).run();
+  });
+}
+function getVideoDuration(f) {
+  return new Promise((resolve,reject)=>{
+    ffmpeg.ffprobe(f,(err,meta)=>{ if(err) return reject(err); resolve(meta.format.duration||0); });
+  });
+}
+function cutClip(input,output,startSec,durationSec,vfArg) {
+  return new Promise((resolve,reject)=>{
+    const cmd=ffmpeg(input).setStartTime(startSec).setDuration(durationSec);
+    if(vfArg) cmd.videoFilter(vfArg);
+    cmd.outputOptions(['-c:v libx264','-c:a aac','-preset ultrafast','-avoid_negative_ts','make_zero','-movflags','+faststart'])
+      .output(output).on('end',resolve).on('error',reject).run();
+  });
+}
+function mergeClips(segs,out) {
+  return new Promise((resolve,reject)=>{
+    const list=out+'.txt';
+    fs.writeFileSync(list,segs.map(f=>`file '${f}'`).join('\n'));
+    ffmpeg().input(list).inputOptions(['-f','concat','-safe','0'])
+      .outputOptions(['-c','copy','-movflags','+faststart']).output(out)
+      .on('end',()=>{try{fs.unlinkSync(list);}catch(e){}resolve();})
+      .on('error',(e)=>{try{fs.unlinkSync(list);}catch(e2){}reject(e);})
+      .run();
+  });
+}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+ 
+app.listen(PORT,()=>{
+  console.log(`Kaizer Cutter v2.0 on port ${PORT}`);
+  try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
 });
