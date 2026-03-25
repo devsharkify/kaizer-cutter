@@ -123,8 +123,12 @@ app.post('/cut', upload.single('file'), async (req, res) => {
       console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}→${end.toFixed(1)}s`);
  
       let vf = [];
-      if (is916) { vf.push(`scale=${outW*2}:-2`, `crop=${outW}:${outH}`); }
-      else { vf.push(`scale=${outW}:${outH}`); }
+      if (is916) {
+        // Scale keeping aspect ratio, then pad/crop to exact 9:16
+        vf.push(`scale=-2:${outH}`, `crop=${outW}:${outH}`);
+      } else {
+        vf.push(`scale=${outW}:${outH}`);
+      }
       if (captions && capData[i]?.text) {
         const txt = capData[i].text.replace(/[':]/g,' ').replace(/\[|\]/g,'');
         const fs2=is916?36:24, boxY=`h-${is916?150:80}`, boxH=is916?130:70;
@@ -201,3 +205,4 @@ app.listen(PORT,()=>{
   try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
   try{console.log('Python:',execSync('python3 --version 2>&1').toString().trim());}catch(e){}
 });
+ 
