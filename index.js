@@ -1,11 +1,8 @@
-
-Copy
-
 // KAIZER MODE 3 — Cutter + Transcriber v2.1
 // POST /transcribe — calls Python Sarvam SDK (full file, no chunking)
 // POST /cut        — FFmpeg frame-accurate cuts + 9:16 + captions
 // GET  /download/:token
- 
+
 const express  = require('express');
 const multer   = require('multer');
 const cors     = require('cors');
@@ -13,22 +10,22 @@ const ffmpeg   = require('fluent-ffmpeg');
 const fs       = require('fs');
 const path     = require('path');
 const { execSync, spawn } = require('child_process');
- 
+
 const app  = express();
 const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
- 
+
 const TMP = '/tmp/kaizer';
 fs.mkdirSync(TMP, { recursive: true });
- 
+
 const storage = multer.diskStorage({
   destination: TMP,
   filename: (req, file, cb) => cb(null, `upload_${Date.now()}`)
 });
 const upload = multer({ storage, limits: { fileSize: 600 * 1024 * 1024 } });
 const pendingDownloads = new Map();
- 
+
 // Health / Frontend
 app.get('/', (req, res) => {
   const htmlPath = path.join(__dirname, 'public', 'index.html');
@@ -36,7 +33,7 @@ app.get('/', (req, res) => {
   res.json({ status: 'ok', service: 'kaizer-cutter', version: '2.1' });
 });
 app.use(express.static(path.join(__dirname, 'public')));
- 
+
 // ================================================================
 // POST /transcribe
 // Uses Python sarvamai SDK — full file Batch API, no chunking
@@ -45,18 +42,18 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const sarvamKey = req.body.sarvamKey || req.headers['x-sarvam-key'];
   if (!sarvamKey) { try{fs.unlinkSync(req.file.path);}catch(e){} return res.status(400).json({ error: 'sarvamKey required' }); }
- 
+
   const language  = req.body.language || 'te-IN';
   const jobId     = Date.now();
   const inputFile = req.file.path;
   console.log(`[${jobId}] TRANSCRIBE: ${(req.file.size/1024/1024).toFixed(1)}MB`);
- 
+
   try {
     // Extract 16kHz mono WAV for Sarvam
     const audioPath = path.join(TMP, `audio_${jobId}.wav`);
     await extractAudio(inputFile, audioPath);
     console.log(`[${jobId}] Audio extracted, calling Python Sarvam SDK...`);
- 
+
     // Call Python script with Sarvam SDK
     const result = await runPython([
       path.join(__dirname, 'transcribe.py'),
@@ -64,19 +61,19 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
       sarvamKey,
       language
     ]);
- 
+
     [audioPath, inputFile].forEach(f => { try{fs.unlinkSync(f);}catch(e){} });
- 
+
     console.log(`[${jobId}] Done: ${result.segments?.length||0} segments`);
     res.json({ success: true, segments: result.segments||[], transcript: result.transcript||'' });
- 
+
   } catch(err) {
     try{fs.unlinkSync(inputFile);}catch(e){}
     console.error(`[${jobId}] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 function runPython(args) {
   return new Promise((resolve, reject) => {
     const proc = spawn('python3', args, { timeout: 10 * 60 * 1000 });
@@ -91,7 +88,7 @@ function runPython(args) {
     proc.on('error', reject);
   });
 }
- 
+
 // ================================================================
 // POST /cut
 // ================================================================
@@ -101,7 +98,7 @@ app.post('/cut', upload.single('file'), async (req, res) => {
   let clips;
   try { clips = JSON.parse(req.body.clips||'[]'); } catch(e) { return res.status(400).json({error:'Bad clips JSON'}); }
   if (!clips.length) return res.status(400).json({ error: 'No clips' });
- 
+
   const jobId    = Date.now();
   const inputFile = req.file.path;
   const preroll  = parseFloat(req.body.preroll||'4.0');
@@ -110,13 +107,13 @@ app.post('/cut', upload.single('file'), async (req, res) => {
   const captions = req.body.captions==='1';
   let capData = [];
   if (captions && req.body.captionData) { try{capData=JSON.parse(req.body.captionData);}catch(e){} }
- 
+
   const is916 = ratio==='9:16';
   const is910 = ratio==='9:10';
   const outW = is916 ? 540 : is910 ? 540 : 960;
   const outH = is916 ? 960 : is910 ? 600 : 540;
   console.log(`[${jobId}] CUT: ${clips.length} clips | ${ratio} | captions:${captions}`);
- 
+
   const segFiles=[], results=[];
   try {
     const duration = await getVideoDuration(inputFile);
@@ -133,7 +130,7 @@ app.post('/cut', upload.single('file'), async (req, res) => {
       }
       const segPath = path.join(TMP, `seg_${jobId}_${i}.mp4`);
       console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}→${end.toFixed(1)}s`);
- 
+
       // DEBUG: skip all filters temporarily
       let vf = [];
       // if (is916 || is910) {
@@ -147,32 +144,32 @@ app.post('/cut', upload.single('file'), async (req, res) => {
         vf.push(`drawbox=y=${boxY}:color=black@0.75:width=iw:height=${boxH}:t=fill`);
         vf.push(`drawtext=fontfile=/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf:text='${txt}':fontsize=${fs2}:fontcolor=white:x=(w-text_w)/2:y=${boxY}+18:line_spacing=8`);
       }
- 
+
       await cutClip(inputFile, segPath, start, end-start, vf.length > 0 ? vf.join(',') : null);
       segFiles.push(segPath);
       results.push({ index:i, start, end, duration:end-start });
     }
- 
+
     const outputPath = path.join(TMP, `merged_${jobId}.mp4`);
     if (segFiles.length===1) fs.copyFileSync(segFiles[0], outputPath);
     else await mergeClips(segFiles, outputPath);
- 
+
     const sizeMB  = (fs.statSync(outputPath).size/1024/1024).toFixed(1);
     const elapsed = ((Date.now()-startTime)/1000).toFixed(1);
     const token   = `${jobId}`;
     pendingDownloads.set(token, outputPath);
     setTimeout(()=>{ [outputPath,inputFile,...segFiles].forEach(f=>{try{fs.unlinkSync(f);}catch(e){}}); pendingDownloads.delete(token); }, 10*60*1000);
- 
+
     console.log(`[${jobId}] Done: ${elapsed}s ${sizeMB}MB`);
     res.json({ success:true, downloadUrl:`/download/${token}`, sizeMB, elapsedSec:elapsed, clips:results });
- 
+
   } catch(err) {
     [inputFile,...segFiles].forEach(f=>{try{fs.unlinkSync(f);}catch(e){}});
     console.error(`[${jobId}] Error:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 app.get('/download/:token', (req,res)=>{
   const p = pendingDownloads.get(req.params.token);
   if (!p||!fs.existsSync(p)) return res.status(404).json({error:'Expired'});
@@ -180,7 +177,7 @@ app.get('/download/:token', (req,res)=>{
   res.setHeader('Content-Type','video/mp4');
   res.sendFile(p);
 });
- 
+
 function extractAudio(inp,out) {
   return new Promise((resolve,reject)=>{
     ffmpeg(inp).noVideo().audioChannels(1).audioFrequency(16000).audioCodec('pcm_s16le')
@@ -227,7 +224,7 @@ function mergeClips(segs, out) {
     }
   });
 }
- 
+
 app.listen(PORT,()=>{
   console.log(`Kaizer Cutter v2.1 on port ${PORT}`);
   try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
