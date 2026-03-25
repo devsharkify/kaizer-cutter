@@ -72,12 +72,12 @@ app.post('/cut', upload.single('file'), async (req, res) => {
     try { captionData = JSON.parse(req.body.captionData); } catch(e) {}
   }
  
+  const jobId      = Date.now();
   const is916 = ratio === '9:16';
   const outW = is916 ? 540 : 960;
   const outH = is916 ? 960 : 540;
  
   console.log(`[${jobId}] ${clips.length} clips | ratio:${ratio} | captions:${captions} | preroll:${preroll}s | tail:${tail}s`);
-  const jobId     = Date.now();
   const segFiles  = [];
   const results   = [];
  
