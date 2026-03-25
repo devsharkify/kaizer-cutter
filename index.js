@@ -1,4 +1,4 @@
-// KAIZER MODE 3 — Cutter + Transcriber v2.2
+// KAIZER MODE 3 — Cutter + Transcriber v2.1
 // POST /transcribe — calls Python Sarvam SDK (full file, no chunking)
 // POST /cut        — FFmpeg frame-accurate cuts + 9:16 + captions
 // GET  /download/:token
@@ -131,13 +131,13 @@ app.post('/cut', upload.single('file'), async (req, res) => {
       const segPath = path.join(TMP, `seg_${jobId}_${i}.mp4`);
       console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}→${end.toFixed(1)}s`);
 
-      // DEBUG: skip all filters temporarily
+      // Build filter
       let vf = [];
-      // if (is916 || is910) {
-      //   vf.push(`scale='trunc(oh*a/2)*2':${outH}`, `crop=${outW}:${outH}`);
-      // } else {
-      //   vf.push(`scale=${outW}:${outH}`);
-      // }
+      if (is916 || is910) {
+        vf.push(`scale='trunc(oh*a/2)*2':${outH}`, `crop=${outW}:${outH}`);
+      } else {
+        vf.push(`scale=${outW}:${outH}`);
+      }
       if (captions && capData[i]?.text) {
         const txt = capData[i].text.replace(/[':]/g,' ').replace(/\[|\]/g,'');
         const fs2=is916?36:24, boxY=`h-${is916?150:80}`, boxH=is916?130:70;
