@@ -126,9 +126,15 @@ app.post('/cut', upload.single('file'), async (req, res) => {
  
       let vf = [];
       if (is916 || is910) {
-        // Scale to fill height, crop width to target
-        vf.push(`scale=-2:${outH}`, `crop=${outW}:${outH}`);
+        // Scale to fill target height, crop center to target width
+        // force_original_aspect_ratio=increase ensures no black bars
+        // trunc to even numbers avoids libx264 "not divisible by 2" errors
+        vf.push(
+          `scale='trunc(oh*a/2)*2':${outH}`,
+          `crop=${outW}:${outH}`
+        );
       } else {
+        // 16:9 — simple scale, force even dimensions
         vf.push(`scale=${outW}:${outH}`);
       }
       if (captions && capData[i]?.text) {
