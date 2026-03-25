@@ -1,5 +1,5 @@
-// KAIZER MODE 3 — Cutter + Transcriber v2.0
-// POST /transcribe — Sarvam Batch API (full file, no chunking)
+// KAIZER MODE 3 — Cutter + Transcriber v2.1
+// POST /transcribe — calls Python Sarvam SDK (full file, no chunking)
 // POST /cut        — FFmpeg frame-accurate cuts + 9:16 + captions
 // GET  /download/:token
  
@@ -9,9 +9,7 @@ const cors     = require('cors');
 const ffmpeg   = require('fluent-ffmpeg');
 const fs       = require('fs');
 const path     = require('path');
-const fetch    = require('node-fetch');
-const FormData = require('form-data');
-const { execSync } = require('child_process');
+const { execSync, spawn } = require('child_process');
  
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -28,16 +26,17 @@ const storage = multer.diskStorage({
 const upload = multer({ storage, limits: { fileSize: 600 * 1024 * 1024 } });
 const pendingDownloads = new Map();
  
-// Health
+// Health / Frontend
 app.get('/', (req, res) => {
   const htmlPath = path.join(__dirname, 'public', 'index.html');
   if (fs.existsSync(htmlPath)) return res.sendFile(htmlPath);
-  res.json({ status: 'ok', service: 'kaizer-cutter', version: '2.0' });
+  res.json({ status: 'ok', service: 'kaizer-cutter', version: '2.1' });
 });
 app.use(express.static(path.join(__dirname, 'public')));
  
 // ================================================================
 // POST /transcribe
+// Uses Python sarvamai SDK — full file Batch API, no chunking
 // ================================================================
 app.post('/transcribe', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
@@ -50,72 +49,23 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
   console.log(`[${jobId}] TRANSCRIBE: ${(req.file.size/1024/1024).toFixed(1)}MB`);
  
   try {
-    // Extract 16kHz mono WAV
+    // Extract 16kHz mono WAV for Sarvam
     const audioPath = path.join(TMP, `audio_${jobId}.wav`);
     await extractAudio(inputFile, audioPath);
+    console.log(`[${jobId}] Audio extracted, calling Python Sarvam SDK...`);
  
-    // Create Sarvam batch job
-    const cr = await fetch('https://api.sarvam.ai/speech-to-text/batch/jobs', {
-      method: 'POST',
-      headers: { 'api-subscription-key': sarvamKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'saaras:v3', mode: 'transcribe', language_code: language, with_diarization: true, num_speakers: 5 })
-    });
-    if (!cr.ok) throw new Error(`Create job: ${cr.status} ${await cr.text()}`);
-    const crData = await cr.json();
-    const sJobId = crData.job_id || crData.id;
-    console.log(`[${jobId}] Sarvam job: ${sJobId}`);
- 
-    // Upload audio
-    const fd = new FormData();
-    fd.append('files', fs.createReadStream(audioPath), { filename: 'audio.wav', contentType: 'audio/wav' });
-    const ur = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}/files`, {
-      method: 'POST', headers: { 'api-subscription-key': sarvamKey, ...fd.getHeaders() }, body: fd
-    });
-    if (!ur.ok) throw new Error(`Upload: ${ur.status} ${await ur.text()}`);
- 
-    // Start job
-    const sr = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}/start`, {
-      method: 'POST', headers: { 'api-subscription-key': sarvamKey }
-    });
-    if (!sr.ok) throw new Error(`Start: ${sr.status} ${await sr.text()}`);
-    console.log(`[${jobId}] Polling...`);
- 
-    // Poll
-    let result = null;
-    for (let i = 0; i < 120; i++) {
-      await sleep(5000);
-      const pr = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}`, {
-        headers: { 'api-subscription-key': sarvamKey }
-      });
-      const pd = await pr.json();
-      const state = (pd.state || pd.status || '').toUpperCase();
-      console.log(`[${jobId}] Poll ${i+1}: ${state}`);
-      if (['COMPLETED','SUCCESS','DONE'].includes(state)) { result = pd; break; }
-      if (['FAILED','ERROR'].includes(state)) throw new Error(`Job failed: ${JSON.stringify(pd)}`);
-    }
-    if (!result) throw new Error('Timeout');
- 
-    // Get output
-    let segments = [], transcript = '';
-    const fr = await fetch(`https://api.sarvam.ai/speech-to-text/batch/jobs/${sJobId}/files`, {
-      headers: { 'api-subscription-key': sarvamKey }
-    });
-    if (fr.ok) {
-      const fd2 = await fr.json();
-      const done = (fd2.files||[]).filter(f => ['SUCCESS','COMPLETED','DONE'].includes((f.state||f.status||'').toUpperCase()));
-      for (const file of done) {
-        if (file.output_url) {
-          const od = await (await fetch(file.output_url)).json();
-          segments = parseSarvam(od);
-          transcript = od.transcript || segments.map(s=>s.text).join(' ');
-        }
-      }
-    }
-    if (!segments.length) { segments = parseSarvam(result); transcript = result.transcript||''; }
+    // Call Python script with Sarvam SDK
+    const result = await runPython([
+      path.join(__dirname, 'transcribe.py'),
+      audioPath,
+      sarvamKey,
+      language
+    ]);
  
     [audioPath, inputFile].forEach(f => { try{fs.unlinkSync(f);}catch(e){} });
-    console.log(`[${jobId}] Done: ${segments.length} segments`);
-    res.json({ success: true, segments, transcript, sarvamJobId: sJobId });
+ 
+    console.log(`[${jobId}] Done: ${result.segments?.length||0} segments`);
+    res.json({ success: true, segments: result.segments||[], transcript: result.transcript||'' });
  
   } catch(err) {
     try{fs.unlinkSync(inputFile);}catch(e){}
@@ -124,32 +74,19 @@ app.post('/transcribe', upload.single('file'), async (req, res) => {
   }
 });
  
-function parseSarvam(data) {
-  if (data.diarized_transcript?.entries?.length) {
-    return data.diarized_transcript.entries.map(e => ({
-      start: e.start_time_seconds||0, end: e.end_time_seconds||0,
-      text: e.transcript||'', speaker: `SPK${e.speaker_id||'0'}`
-    })).filter(s=>s.text.trim());
-  }
-  if (data.timestamps?.words?.length) {
-    const words=data.timestamps.words, starts=data.timestamps.start_time_seconds||[], ends=data.timestamps.end_time_seconds||[];
-    const segs=[]; let seg={start:null,end:null,words:[]};
-    words.forEach((w,i)=>{
-      if(seg.start===null) seg.start=starts[i]||0;
-      seg.words.push(w); seg.end=ends[i]||0;
-      if(seg.words.length>=10||i===words.length-1){
-        segs.push({start:seg.start,end:seg.end,text:seg.words.join(' '),speaker:'SPK0'});
-        seg={start:null,end:null,words:[]};
-      }
+function runPython(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('python3', args, { timeout: 10 * 60 * 1000 });
+    let stdout = '', stderr = '';
+    proc.stdout.on('data', d => stdout += d);
+    proc.stderr.on('data', d => { stderr += d; console.log('[PY]', d.toString().trim()); });
+    proc.on('close', code => {
+      if (code !== 0) return reject(new Error(stderr || `Python exited ${code}`));
+      try { resolve(JSON.parse(stdout)); }
+      catch(e) { reject(new Error('Invalid JSON from Python: ' + stdout.slice(0,200))); }
     });
-    return segs.filter(s=>s.text.trim());
-  }
-  if (data.transcript) {
-    return data.transcript.split(/[।.!?\n]+/).filter(s=>s.trim()).map((text,i)=>({
-      start:i*10, end:(i+1)*10, text:text.trim(), speaker:'SPK0'
-    }));
-  }
-  return [];
+    proc.on('error', reject);
+  });
 }
  
 // ================================================================
@@ -183,7 +120,7 @@ app.post('/cut', upload.single('file'), async (req, res) => {
       const start = Math.max(0, c.start_sec - preroll);
       const end   = Math.min(duration, c.end_sec + tail);
       const segPath = path.join(TMP, `seg_${jobId}_${i}.mp4`);
-      console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}s→${end.toFixed(1)}s`);
+      console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}→${end.toFixed(1)}s`);
  
       let vf = [];
       if (is916) { vf.push(`scale=${outW*2}:-2`, `crop=${outW}:${outH}`); }
@@ -258,9 +195,9 @@ function mergeClips(segs,out) {
       .run();
   });
 }
-function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
  
 app.listen(PORT,()=>{
-  console.log(`Kaizer Cutter v2.0 on port ${PORT}`);
+  console.log(`Kaizer Cutter v2.1 on port ${PORT}`);
   try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
+  try{console.log('Python:',execSync('python3 --version 2>&1').toString().trim());}catch(e){}
 });
