@@ -182,30 +182,39 @@ function getVideoDuration(f) {
     ffmpeg.ffprobe(f,(err,meta)=>{ if(err) return reject(err); resolve(meta.format.duration||0); });
   });
 }
-function cutClip(input,output,startSec,durationSec,vfArg) {
-  return new Promise((resolve,reject)=>{
-    const cmd=ffmpeg(input).setStartTime(startSec).setDuration(durationSec);
-    if(vfArg && vfArg.trim().length > 0) cmd.videoFilter(vfArg);
-    cmd.outputOptions(['-c:v libx264','-c:a aac','-preset ultrafast','-avoid_negative_ts','make_zero','-movflags','+faststart'])
-      .output(output)
-      .on('end',resolve)
-      .on('stderr', line => { if(line.includes('Error')||line.includes('error')) console.log('[FFmpeg]', line); })
-      .on('error',(err,stdout,stderr)=>{
-        console.error('[FFmpeg ERROR]', (stderr||'').slice(-500));
-        reject(new Error(err.message));
-      })
-      .run();
+function cutClip(input, output, startSec, durationSec, vfArg) {
+  return new Promise((resolve, reject) => {
+    try {
+      let cmd = `ffmpeg -y -ss ${startSec.toFixed(3)} -i "${input}" -t ${durationSec.toFixed(3)}`;
+      if (vfArg && vfArg.trim()) {
+        cmd += ` -vf "${vfArg}" -c:v libx264 -c:a aac -preset ultrafast`;
+      } else {
+        cmd += ` -c:v libx264 -c:a aac -preset ultrafast`;
+      }
+      cmd += ` -avoid_negative_ts make_zero -movflags +faststart "${output}" 2>&1`;
+      console.log(`[FFmpeg CMD] ${cmd}`);
+      const out = execSync(cmd, { maxBuffer: 50*1024*1024 });
+      resolve();
+    } catch(e) {
+      const msg = e.stdout?.toString() || e.stderr?.toString() || e.message;
+      console.error('[FFmpeg FAIL]', msg.slice(-500));
+      reject(new Error(msg.slice(-300)));
+    }
   });
 }
-function mergeClips(segs,out) {
-  return new Promise((resolve,reject)=>{
-    const list=out+'.txt';
-    fs.writeFileSync(list,segs.map(f=>`file '${f}'`).join('\n'));
-    ffmpeg().input(list).inputOptions(['-f','concat','-safe','0'])
-      .outputOptions(['-c','copy','-movflags','+faststart']).output(out)
-      .on('end',()=>{try{fs.unlinkSync(list);}catch(e){}resolve();})
-      .on('error',(e)=>{try{fs.unlinkSync(list);}catch(e2){}reject(e);})
-      .run();
+function mergeClips(segs, out) {
+  return new Promise((resolve, reject) => {
+    try {
+      const list = out + '.txt';
+      fs.writeFileSync(list, segs.map(f => `file '${f}'`).join('\n'));
+      const cmd = `ffmpeg -y -f concat -safe 0 -i "${list}" -c copy -movflags +faststart "${out}" 2>&1`;
+      execSync(cmd, { maxBuffer: 50*1024*1024 });
+      try { fs.unlinkSync(list); } catch(e) {}
+      resolve();
+    } catch(e) {
+      const msg = e.stdout?.toString() || e.message;
+      reject(new Error(msg.slice(-300)));
+    }
   });
 }
  
@@ -214,4 +223,3 @@ app.listen(PORT,()=>{
   try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
   try{console.log('Python:',execSync('python3 --version 2>&1').toString().trim());}catch(e){}
 });
- 
