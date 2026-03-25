@@ -1,4 +1,4 @@
-// KAIZER MODE 3 — Cutter + Transcriber v2.2
+// KAIZER MODE 3 — Cutter + Transcriber v2.1
 // POST /transcribe — calls Python Sarvam SDK (full file, no chunking)
 // POST /cut        — FFmpeg frame-accurate cuts + 9:16 + captions
 // GET  /download/:token
@@ -119,8 +119,15 @@ app.post('/cut', upload.single('file'), async (req, res) => {
     const duration = await getVideoDuration(inputFile);
     for (let i=0; i<clips.length; i++) {
       const c = clips[i];
-      const start = Math.max(0, c.start_sec - preroll);
-      const end   = Math.min(duration, c.end_sec + tail);
+      const rawStart = Math.max(0, c.start_sec - preroll);
+      const rawEnd   = Math.min(duration, c.end_sec + tail);
+      // Guard: end must be after start
+      const start = Math.min(rawStart, rawEnd - 1);
+      const end   = Math.max(rawEnd, rawStart + 1);
+      if (end <= start) {
+        console.log(`[${jobId}] Clip ${i+1} skipped — invalid range ${start}→${end}`);
+        continue;
+      }
       const segPath = path.join(TMP, `seg_${jobId}_${i}.mp4`);
       console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}→${end.toFixed(1)}s`);
  
@@ -223,4 +230,3 @@ app.listen(PORT,()=>{
   try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
   try{console.log('Python:',execSync('python3 --version 2>&1').toString().trim());}catch(e){}
 });
- 
