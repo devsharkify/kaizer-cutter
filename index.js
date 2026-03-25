@@ -138,7 +138,7 @@ app.post('/cut', upload.single('file'), async (req, res) => {
         vf.push(`drawtext=fontfile=/usr/share/fonts/truetype/noto/NotoSansTelugu-Regular.ttf:text='${txt}':fontsize=${fs2}:fontcolor=white:x=(w-text_w)/2:y=${boxY}+18:line_spacing=8`);
       }
  
-      await cutClip(inputFile, segPath, start, end-start, vf.join(','));
+      await cutClip(inputFile, segPath, start, end-start, vf.length > 0 ? vf.join(',') : null);
       segFiles.push(segPath);
       results.push({ index:i, start, end, duration:end-start });
     }
@@ -185,14 +185,14 @@ function getVideoDuration(f) {
 function cutClip(input,output,startSec,durationSec,vfArg) {
   return new Promise((resolve,reject)=>{
     const cmd=ffmpeg(input).setStartTime(startSec).setDuration(durationSec);
-    if(vfArg) cmd.videoFilter(vfArg);
+    if(vfArg && vfArg.trim().length > 0) cmd.videoFilter(vfArg);
     cmd.outputOptions(['-c:v libx264','-c:a aac','-preset ultrafast','-avoid_negative_ts','make_zero','-movflags','+faststart'])
       .output(output)
       .on('end',resolve)
-      .on('stderr', line => console.log('[FFmpeg]', line))
+      .on('stderr', line => { if(line.includes('Error')||line.includes('error')) console.log('[FFmpeg]', line); })
       .on('error',(err,stdout,stderr)=>{
-        console.error('[FFmpeg ERROR]', stderr||err.message);
-        reject(new Error(err.message + ' | ' + (stderr||'').slice(-300)));
+        console.error('[FFmpeg ERROR]', (stderr||'').slice(-500));
+        reject(new Error(err.message));
       })
       .run();
   });
@@ -214,3 +214,4 @@ app.listen(PORT,()=>{
   try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
   try{console.log('Python:',execSync('python3 --version 2>&1').toString().trim());}catch(e){}
 });
+ 
