@@ -109,7 +109,9 @@ app.post('/cut', upload.single('file'), async (req, res) => {
   if (captions && req.body.captionData) { try{capData=JSON.parse(req.body.captionData);}catch(e){} }
  
   const is916 = ratio==='9:16';
-  const outW = is916?540:960, outH = is916?960:540;
+  const is910 = ratio==='9:10';
+  const outW = is916 ? 540 : is910 ? 540 : 960;
+  const outH = is916 ? 960 : is910 ? 600 : 540;
   console.log(`[${jobId}] CUT: ${clips.length} clips | ${ratio} | captions:${captions}`);
  
   const segFiles=[], results=[];
@@ -123,8 +125,8 @@ app.post('/cut', upload.single('file'), async (req, res) => {
       console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}→${end.toFixed(1)}s`);
  
       let vf = [];
-      if (is916) {
-        // Scale keeping aspect ratio, then pad/crop to exact 9:16
+      if (is916 || is910) {
+        // Scale to fill height, crop width to target
         vf.push(`scale=-2:${outH}`, `crop=${outW}:${outH}`);
       } else {
         vf.push(`scale=${outW}:${outH}`);
@@ -205,4 +207,3 @@ app.listen(PORT,()=>{
   try{console.log('FFmpeg:',execSync('ffmpeg -version 2>&1').toString().split('\n')[0]);}catch(e){}
   try{console.log('Python:',execSync('python3 --version 2>&1').toString().trim());}catch(e){}
 });
- 
