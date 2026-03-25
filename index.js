@@ -124,19 +124,13 @@ app.post('/cut', upload.single('file'), async (req, res) => {
       const segPath = path.join(TMP, `seg_${jobId}_${i}.mp4`);
       console.log(`[${jobId}] Clip ${i+1}: ${start.toFixed(1)}→${end.toFixed(1)}s`);
  
+      // DEBUG: skip all filters temporarily
       let vf = [];
-      if (is916 || is910) {
-        // Scale to fill target height, crop center to target width
-        // force_original_aspect_ratio=increase ensures no black bars
-        // trunc to even numbers avoids libx264 "not divisible by 2" errors
-        vf.push(
-          `scale='trunc(oh*a/2)*2':${outH}`,
-          `crop=${outW}:${outH}`
-        );
-      } else {
-        // 16:9 — simple scale, force even dimensions
-        vf.push(`scale=${outW}:${outH}`);
-      }
+      // if (is916 || is910) {
+      //   vf.push(`scale='trunc(oh*a/2)*2':${outH}`, `crop=${outW}:${outH}`);
+      // } else {
+      //   vf.push(`scale=${outW}:${outH}`);
+      // }
       if (captions && capData[i]?.text) {
         const txt = capData[i].text.replace(/[':]/g,' ').replace(/\[|\]/g,'');
         const fs2=is916?36:24, boxY=`h-${is916?150:80}`, boxH=is916?130:70;
@@ -193,7 +187,14 @@ function cutClip(input,output,startSec,durationSec,vfArg) {
     const cmd=ffmpeg(input).setStartTime(startSec).setDuration(durationSec);
     if(vfArg) cmd.videoFilter(vfArg);
     cmd.outputOptions(['-c:v libx264','-c:a aac','-preset ultrafast','-avoid_negative_ts','make_zero','-movflags','+faststart'])
-      .output(output).on('end',resolve).on('error',reject).run();
+      .output(output)
+      .on('end',resolve)
+      .on('stderr', line => console.log('[FFmpeg]', line))
+      .on('error',(err,stdout,stderr)=>{
+        console.error('[FFmpeg ERROR]', stderr||err.message);
+        reject(new Error(err.message + ' | ' + (stderr||'').slice(-300)));
+      })
+      .run();
   });
 }
 function mergeClips(segs,out) {
