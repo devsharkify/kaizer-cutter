@@ -1,0 +1,2831 @@
+<!DOCTYPE html>
+<html lang="te">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kaizer News — Mode 3: Raw Footage Processor</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;600;700&family=Noto+Sans+Telugu:wght@300;400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #07070d;
+    --bg2: #0e0e1a;
+    --bg3: #141420;
+    --card: #10101c;
+    --border: #1e1e30;
+    --red: #e81e1e;
+    --red2: #ff4444;
+    --orange: #ff6b00;
+    --gold: #f0c040;
+    --text: #dde0f0;
+    --text2: #7a7a9a;
+    --text3: #4a4a6a;
+    --green: #00e676;
+    --blue: #1e3af0;
+    --glow-red: 0 0 20px rgba(232,30,30,0.4);
+    --glow-gold: 0 0 20px rgba(240,192,64,0.3);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Chakra Petch', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* Header */
+  .header {
+    background: linear-gradient(90deg, #0e0010, #0a0a18, #0e0010);
+    border-bottom: 2px solid var(--red);
+    padding: 14px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: var(--glow-red);
+  }
+
+  .header-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo-dot {
+    width: 36px; height: 36px;
+    background: var(--red);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: white;
+    letter-spacing: -0.5px;
+    box-shadow: var(--glow-red);
+    animation: pulse-logo 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-logo {
+    0%, 100% { box-shadow: 0 0 10px rgba(232,30,30,0.5); }
+    50% { box-shadow: 0 0 25px rgba(232,30,30,0.9); }
+  }
+
+  .header-title {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: white;
+  }
+
+  .header-title span {
+    color: var(--red);
+  }
+
+  .header-mode {
+    background: rgba(232,30,30,0.15);
+    border: 1px solid var(--red);
+    color: var(--red);
+    padding: 4px 12px;
+    font-size: 11px;
+    letter-spacing: 3px;
+    font-weight: 600;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--text2);
+    letter-spacing: 1px;
+  }
+
+  /* API Keys Panel */
+  .api-panel {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 32px;
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .api-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--text2);
+    text-transform: uppercase;
+  }
+
+  .api-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .api-input {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    padding: 6px 12px;
+    width: 280px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .api-input:focus { border-color: var(--red); }
+  .api-input::placeholder { color: var(--text3); }
+
+  .api-status {
+    font-size: 10px;
+    padding: 3px 8px;
+    letter-spacing: 1px;
+  }
+  .api-status.ok { color: var(--green); border: 1px solid rgba(0,230,118,0.3); }
+  .api-status.empty { color: var(--text3); border: 1px solid var(--border); }
+
+  /* Main layout */
+  .main {
+    display: grid;
+    grid-template-columns: 360px 1fr;
+    min-height: calc(100vh - 100px);
+  }
+
+  /* Left sidebar — pipeline */
+  .sidebar {
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .sidebar-title {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Pipeline steps */
+  .step {
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .step::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: var(--border);
+    transition: background 0.2s;
+  }
+
+  .step.active::before { background: var(--red); box-shadow: var(--glow-red); }
+  .step.done::before { background: var(--green); }
+  .step.active { border-color: rgba(232,30,30,0.3); background: rgba(232,30,30,0.05); }
+
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .step-num {
+    width: 22px; height: 22px;
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text2);
+    flex-shrink: 0;
+  }
+
+  .step.active .step-num {
+    border-color: var(--red);
+    color: var(--red);
+    background: rgba(232,30,30,0.1);
+  }
+
+  .step.done .step-num {
+    border-color: var(--green);
+    color: var(--green);
+    background: rgba(0,230,118,0.1);
+  }
+
+  .step-name {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--text);
+  }
+
+  .step.active .step-name { color: white; }
+
+  .step-desc {
+    font-size: 10px;
+    color: var(--text3);
+    letter-spacing: 0.5px;
+    margin-left: 32px;
+    line-height: 1.5;
+  }
+
+  .step.active .step-desc { color: var(--text2); }
+
+  .step-arrow {
+    text-align: center;
+    color: var(--text3);
+    font-size: 16px;
+    margin: 2px 0;
+  }
+
+  /* Action buttons */
+  .btn {
+    padding: 10px 20px;
+    font-family: 'Chakra Petch', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn-primary {
+    background: var(--red);
+    color: white;
+  }
+
+  .btn-primary:hover { background: var(--red2); box-shadow: var(--glow-red); }
+  .btn-primary:disabled { background: #333; color: #666; cursor: not-allowed; box-shadow: none; }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover { border-color: var(--text2); }
+
+  .btn-gold {
+    background: var(--gold);
+    color: #000;
+  }
+
+  .btn-gold:hover { box-shadow: var(--glow-gold); }
+
+  /* Right content area */
+  .content {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    overflow-y: auto;
+  }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    padding: 48px;
+    text-align: center;
+    cursor: pointer;
+    display: block;
+    transition: all 0.3s;
+    background: var(--card);
+    position: relative;
+  }
+
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--red);
+    background: rgba(232,30,30,0.05);
+  }
+
+  .upload-zone.has-file {
+    border-color: var(--green);
+    border-style: solid;
+    background: rgba(0,230,118,0.03);
+  }
+
+  .upload-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+    opacity: 0.5;
+  }
+
+  .upload-title {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+
+  .upload-sub {
+    font-size: 11px;
+    color: var(--text2);
+    letter-spacing: 1px;
+  }
+
+  #fileInput { display: none; }
+
+  /* Video preview */
+  .preview-wrap {
+    display: none;
+    gap: 20px;
+  }
+
+  .preview-wrap.visible { display: flex; }
+
+  .video-preview {
+    width: 320px;
+    background: #000;
+    flex-shrink: 0;
+  }
+
+  .video-preview video {
+    width: 100%;
+    display: block;
+  }
+
+  .file-meta {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    font-size: 11px;
+  }
+
+  .meta-row .label { color: var(--text2); letter-spacing: 1px; }
+  .meta-row .value { color: var(--text); font-family: 'Share Tech Mono'; }
+
+  /* Section card */
+  .section-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+
+  .section-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg3);
+  }
+
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-title .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--red);
+    animation: blink 1s ease-in-out infinite;
+  }
+
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .section-body { padding: 16px; }
+
+  /* Transcript display */
+  .transcript-scroll {
+    max-height: 220px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .transcript-seg {
+    display: flex;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    font-size: 12px;
+  }
+
+  .seg-time {
+    color: var(--orange);
+    font-family: 'Share Tech Mono';
+    font-size: 10px;
+    white-space: nowrap;
+    padding-top: 2px;
+    min-width: 90px;
+  }
+
+  .seg-text {
+    color: var(--text);
+    font-family: 'Noto Sans Telugu', sans-serif;
+    line-height: 1.6;
+    font-size: 13px;
+  }
+
+  /* Highlights */
+  .highlight-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+
+  .highlight-item {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 12px 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .highlight-item:hover { border-color: var(--red); }
+  .highlight-item.selected { border-color: var(--gold); background: rgba(240,192,64,0.05); }
+
+  .hi-importance {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    min-width: 36px;
+  }
+
+  .hi-score {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--gold);
+    line-height: 1;
+  }
+
+  .hi-stars {
+    font-size: 8px;
+    color: var(--gold);
+    letter-spacing: -1px;
+  }
+
+  .hi-body { flex: 1; }
+
+  .hi-timing {
+    font-family: 'Share Tech Mono';
+    font-size: 10px;
+    color: var(--orange);
+    margin-bottom: 4px;
+  }
+
+  .hi-text {
+    font-family: 'Noto Sans Telugu', sans-serif;
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.5;
+    margin-bottom: 4px;
+  }
+
+  .hi-reason {
+    font-size: 10px;
+    color: var(--text2);
+    letter-spacing: 0.5px;
+    font-style: italic;
+  }
+
+  .hi-badge {
+    font-size: 9px;
+    padding: 2px 6px;
+    letter-spacing: 1px;
+    font-weight: 700;
+  }
+
+  .hi-badge.political { background: rgba(232,30,30,0.2); color: var(--red); }
+  .hi-badge.satire { background: rgba(255,107,0,0.2); color: var(--orange); }
+  .hi-badge.announcement { background: rgba(30,58,240,0.2); color: #6699ff; }
+  .hi-badge.reaction { background: rgba(240,192,64,0.2); color: var(--gold); }
+
+  /* Canvas compositor */
+  .compositor-wrap {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .canvas-container {
+    position: relative;
+    background: #000;
+    border: 1px solid var(--border);
+  }
+
+  #outputCanvas {
+    display: block;
+    width: 640px;
+    height: 360px;
+  }
+
+  .canvas-overlay-label {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+  }
+
+  .compositor-controls {
+    flex: 1;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .control-group {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 12px;
+  }
+
+  .control-group-title {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--text2);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .progress-bar-wrap {
+    background: var(--bg3);
+    height: 4px;
+    width: 100%;
+    margin-top: 6px;
+  }
+
+  .progress-bar {
+    height: 100%;
+    background: var(--red);
+    width: 0%;
+    transition: width 0.3s;
+    box-shadow: var(--glow-red);
+  }
+
+  .log-box {
+    background: #000;
+    border: 1px solid var(--border);
+    padding: 10px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--green);
+    height: 140px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+
+  .log-line { margin-bottom: 2px; }
+  .log-line.err { color: var(--red2); }
+  .log-line.warn { color: var(--orange); }
+  .log-line.info { color: #aaaaff; }
+
+  /* Status chip */
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 4px 10px;
+  }
+
+  .status-chip.idle { color: var(--text3); border: 1px solid var(--border); }
+  .status-chip.running { color: var(--orange); border: 1px solid rgba(255,107,0,0.4); }
+  .status-chip.done { color: var(--green); border: 1px solid rgba(0,230,118,0.4); }
+  .status-chip.error { color: var(--red); border: 1px solid rgba(232,30,30,0.4); }
+
+  .spinner {
+    width: 8px; height: 8px;
+    border: 1.5px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Hidden video element for processing */
+  #sourceVideo { display: none; }
+
+  /* Tooltip */
+  .tooltip-wrap {
+    position: relative;
+    display: inline-block;
+  }
+
+  .tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    font-size: 10px;
+    color: var(--text2);
+    white-space: nowrap;
+    z-index: 50;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+  }
+
+  .tooltip-wrap:hover .tooltip { display: block; }
+
+  /* Intro preview */
+  .intro-preview {
+    background: #000;
+    border: 1px solid var(--border);
+    padding: 12px;
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  .intro-preview code {
+    color: var(--orange);
+    font-family: 'Share Tech Mono';
+    font-size: 10px;
+    display: block;
+    margin-top: 6px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* Animated grid bg */
+  .content-bg {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image:
+      linear-gradient(rgba(232,30,30,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(232,30,30,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .main, .header, .api-panel { position: relative; z-index: 1; }
+
+  /* Responsive hint */
+  .select-all-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    font-size: 11px;
+    color: var(--text2);
+  }
+</style>
+</head>
+<body>
+
+<div class="content-bg"></div>
+<video id="sourceVideo"></video>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-brand">
+    <div class="logo-dot">KN</div>
+    <div>
+      <div class="header-title">KAIZER <span>NEWS</span> TELUGU</div>
+    </div>
+    <div class="header-mode">MODE 3</div>
+  </div>
+  <div class="header-right">
+    <span id="clockDisplay">—</span>
+    <span>RAW FOOTAGE PROCESSOR</span>
+  </div>
+</div>
+
+<!-- API KEYS -->
+<div class="api-panel">
+  <span class="api-label">API KEYS —</span>
+
+  <div class="api-input-wrap">
+    <span class="api-label">ANTHROPIC</span>
+    <input class="api-input" type="password" id="anthropicKey" placeholder="sk-ant-..." />
+    <span class="api-status empty" id="anthropicStatus">UNSET</span>
+  </div>
+
+  <div class="api-input-wrap">
+    <span class="api-label">SARVAM (SAARAS V3)</span>
+    <input class="api-input" type="password" id="sarvamKey" placeholder="your-sarvam-api-key..." />
+    <span class="api-status empty" id="sarvamStatus">UNSET</span>
+  </div>
+  <div style="font-size:9px; color: var(--text3); letter-spacing:1px; margin-left:4px;">
+    ₹30/hr · 1hr batch · code-mix · Telangana dialect · 19.31% WER vs Whisper 91.6% WER
+  </div>
+
+  <div class="api-input-wrap">
+    <span class="api-label">GEMINI</span>
+    <input class="api-input" type="password" id="geminiKey" placeholder="AIza..." style="width:260px;" />
+    <span class="api-status empty" id="geminiStatus">UNSET</span>
+  </div>
+  <div style="font-size:9px; color: var(--text3); letter-spacing:1px; margin-left:4px; margin-bottom:4px;">
+    ₹0.25 per 60min video · ONE call = transcript + highlights + emotion · no chunking
+  </div>
+
+  <div class="api-input-wrap">
+    <span class="api-label">CUTTER URL</span>
+    <input class="api-input" type="text" id="cutterUrl" placeholder="https://your-app.railway.app" style="width:260px;" oninput="saveCutterUrl(this.value)" />
+    <span class="api-status empty" id="cutterStatus">UNSET</span>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-title">⬡ PIPELINE STAGES</div>
+
+    <div class="step active" id="step1">
+      <div class="step-header">
+        <div class="step-num">1</div>
+        <div class="step-name">UPLOAD FOOTAGE</div>
+      </div>
+      <div class="step-desc">Press meet / public byte / raw interview video. MP4, MOV, AVI up to 500MB.</div>
+    </div>
+
+    <div class="step-arrow">↓</div>
+
+    <div class="step" id="step2">
+      <div class="step-header">
+        <div class="step-num">2</div>
+        <div class="step-name">TRANSCRIBE</div>
+      </div>
+      <div class="step-desc">Sarvam Saaras v3 → full Telugu transcript with timestamps. Batch API · 1hr limit · code-mix · Telangana dialect.</div>
+    </div>
+
+    <div class="step-arrow">↓</div>
+
+    <div class="step" id="step3">
+      <div class="step-header">
+        <div class="step-num">3</div>
+        <div class="step-name">PICK HIGHLIGHTS</div>
+      </div>
+      <div class="step-desc">Claude Opus with full Telangana political context → ranked segments.</div>
+    </div>
+
+    <div class="step-arrow">↓</div>
+
+    <div class="step" id="step4">
+      <div class="step-header">
+        <div class="step-num">4</div>
+        <div class="step-name">CUT & DOWNLOAD</div>
+      </div>
+      <div class="step-desc">FFmpeg.wasm → cut highlights → merged MP4 or individual clips. Original audio intact.</div>
+    </div>
+
+    <div style="margin-top: 16px; padding: 12px; background: rgba(232,30,30,0.05); border: 1px solid rgba(232,30,30,0.2); font-size: 10px; color: var(--text2); line-height: 1.6;">
+      <div style="color: var(--red); font-weight: 700; margin-bottom: 6px; letter-spacing: 1px;">⚡ TELANGANA CONTEXT LOADED</div>
+      KCR, KTR, Revanth Reddy, Harish Rao, Pawan Kalyan, CBN, Jagan — all political figures + slang + satire detection pre-loaded into Claude prompt.
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- STEP 1: UPLOAD -->
+    <div class="section-card" id="uploadSection">
+      <div class="section-header">
+        <div class="section-title">
+          <div class="dot"></div>
+          STEP 1 — UPLOAD RAW FOOTAGE
+        </div>
+        <div class="status-chip idle" id="uploadStatus">WAITING</div>
+      </div>
+      <div class="section-body">
+
+        <input type="file" id="fileInput" accept="video/*,audio/*" style="position:absolute;width:1px;height:1px;opacity:0;left:-9999px;" onchange="handleFile(this.files[0])">
+
+        <div id="uploadZone" class="upload-zone">
+          <div class="upload-icon">📹</div>
+          <div class="upload-title">CLICK TO SELECT VIDEO</div>
+          <div class="upload-sub">Press meet · Public byte · Political interview · Raw event footage</div>
+          <div style="margin-top:12px;font-size:10px;color:var(--text3);">MP4 · MOV · AVI · MKV · up to 500MB</div>
+          <div style="margin-top:14px;">
+            <button type="button" class="btn btn-primary" style="font-size:11px;" onclick="event.stopPropagation();document.getElementById('fileInput').click();">📂 BROWSE FILE</button>
+          </div>
+        </div>
+
+        <div id="previewWrap" style="display:none;gap:20px;margin-top:16px;flex-wrap:wrap;">
+          <div style="width:320px;background:#000;flex-shrink:0;">
+            <video id="videoPreview" controls style="width:100%;display:block;max-height:200px;"></video>
+          </div>
+          <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:10px;">
+            <div style="font-size:13px;font-weight:600;color:white;letter-spacing:1px;word-break:break-all;" id="fileName">—</div>
+            <div class="meta-row"><span class="label">SIZE</span><span class="value" id="fileSize">—</span></div>
+            <div class="meta-row"><span class="label">TYPE</span><span class="value" id="fileType">—</span></div>
+            <div class="meta-row"><span class="label">DURATION</span><span class="value" id="fileDuration">—</span></div>
+            <div style="margin-top:10px;">
+              <div style="font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:6px;">TRANSCRIPTION ENGINE</div>
+              <div style="display:flex; gap:6px; margin-bottom:10px;">
+                <button id="engineSarvam" class="btn btn-primary" style="font-size:10px;padding:5px 12px;" onclick="setEngine('sarvam')">SARVAM</button>
+                <button id="engineGemini" class="btn btn-secondary" style="font-size:10px;padding:5px 12px;" onclick="setEngine('gemini')">GEMINI FLASH</button>
+              </div>
+              <div id="engineDesc" style="font-size:10px;color:var(--text3);line-height:1.6;margin-bottom:10px;">
+                Sarvam Saaras v3 · ₹30/hr · 19% WER · Telugu-optimised
+              </div>
+              <button class="btn btn-primary" id="transcribeBtn" onclick="startTranscription()" disabled>
+                ▶ TRANSCRIBE WITH SARVAM
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- STEP 2: TRANSCRIPT -->
+    <div class="section-card" id="transcriptSection" style="display:none;">
+      <div class="section-header">
+        <div class="section-title">
+          <div class="dot"></div>
+          STEP 2 — TRANSCRIPT
+        </div>
+        <div class="status-chip idle" id="transcriptStatus">IDLE</div>
+      </div>
+      <div class="section-body">
+        <div class="transcript-scroll" id="transcriptDisplay">
+          <div style="color: var(--text3); font-size: 11px; text-align: center; padding: 20px;">Transcript will appear here...</div>
+        </div>
+        <div id="transcriptError" style="display:none; margin-top:10px; padding:12px; background:rgba(232,30,30,0.1); border:1px solid var(--red); color:var(--red2); font-size:12px; font-family:Share Tech Mono,monospace; word-break:break-all; line-height:1.6;"></div>
+        <div class="progress-bar-wrap" style="margin-top: 8px;"><div class="progress-bar" id="transcriptProgress"></div></div>
+        <div style="margin-top: 12px; display: flex; gap: 10px; align-items: center;">
+          <button class="btn btn-primary" id="highlightBtn" onclick="pickHighlights()" disabled>
+            ⚡ PICK HIGHLIGHTS WITH CLAUDE
+          </button>
+          <div style="font-size: 10px; color: var(--text3);" id="highlightEngineNote">Claude Sonnet · Telangana political context · Slang aware · Satire detection</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 3: HIGHLIGHTS -->
+    <div class="section-card" id="highlightSection" style="display:none;">
+      <div class="section-header">
+        <div class="section-title">
+          <div class="dot"></div>
+          STEP 3 — HIGHLIGHTS
+        </div>
+        <div class="status-chip idle" id="highlightStatus">IDLE</div>
+      </div>
+      <div class="section-body">
+        <div class="select-all-row">
+          <button class="btn btn-secondary" style="font-size:10px; padding: 4px 10px;" onclick="selectAllHighlights()">SELECT ALL</button>
+          <button class="btn btn-secondary" style="font-size:10px; padding: 4px 10px;" onclick="deselectAllHighlights()">DESELECT ALL</button>
+          <button class="btn btn-primary" style="font-size:10px; padding: 4px 12px; background:var(--gold); color:#000;" onclick="autoSelectToTarget()">🎯 AUTO SELECT</button>
+          <span id="selectedCount">0 selected</span>
+          <span style="color: var(--text3);">·</span>
+          <span id="totalDuration" style="color: var(--orange);">0:00 total</span>
+        </div>
+        <div id="targetDurationInfo" style="font-size:10px; padding:6px 10px; margin-bottom:6px; background:var(--bg3); border:1px solid var(--border); color:var(--text2); letter-spacing:0.5px;"></div>
+        <div class="highlight-list" id="highlightList"></div>
+        <div style="margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-gold" id="compositeBtn" onclick="showDownloadStep()" disabled>
+            🎬 PROCEED TO DOWNLOAD
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 3.5: TITLE & DESCRIPTION GENERATOR -->
+    <div class="section-card" id="titledescSection" style="display:none;">
+      <div class="section-header">
+        <div class="section-title"><div class="dot"></div>AUTO-GENERATE — TITLE · DESCRIPTION · TAGS</div>
+        <div class="status-chip idle" id="titledescStatus">IDLE</div>
+      </div>
+      <div class="section-body">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+          <button class="btn btn-primary" id="generateMetaBtn" onclick="generateTitleDesc()" disabled>
+            ✦ GENERATE WITH CLAUDE
+          </button>
+          <div style="font-size:10px; color:var(--text3);">Telugu title · English SEO description · 15 YouTube tags · Based on your highlights</div>
+        </div>
+        <div id="metaOutput" style="display:none;">
+          <div style="display:flex; flex-direction:column; gap:10px;">
+
+            <div style="background:var(--bg3); border:1px solid var(--border); padding:12px;">
+              <div style="font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:6px;">YOUTUBE TITLE (Telugu)</div>
+              <div id="metaTitle" style="font-family:Noto Sans Telugu,sans-serif; font-size:16px; font-weight:700; color:var(--gold); line-height:1.4;"></div>
+              <button onclick="copyText('metaTitle')" class="btn btn-secondary" style="font-size:9px; padding:3px 10px; margin-top:8px;">COPY</button>
+            </div>
+
+            <div style="background:var(--bg3); border:1px solid var(--border); padding:12px;">
+              <div style="font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:6px;">YOUTUBE TITLE (English — SEO alternate)</div>
+              <div id="metaTitleEn" style="font-size:14px; font-weight:600; color:white; line-height:1.4;"></div>
+              <button onclick="copyText('metaTitleEn')" class="btn btn-secondary" style="font-size:9px; padding:3px 10px; margin-top:8px;">COPY</button>
+            </div>
+
+            <div style="background:var(--bg3); border:1px solid var(--border); padding:12px;">
+              <div style="font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:6px;">DESCRIPTION</div>
+              <div id="metaDesc" style="font-size:12px; color:var(--text); line-height:1.7; white-space:pre-wrap;"></div>
+              <button onclick="copyText('metaDesc')" class="btn btn-secondary" style="font-size:9px; padding:3px 10px; margin-top:8px;">COPY</button>
+            </div>
+
+            <div style="background:var(--bg3); border:1px solid var(--border); padding:12px;">
+              <div style="font-size:9px; letter-spacing:2px; color:var(--text2); margin-bottom:6px;">TAGS (paste in YouTube)</div>
+              <div id="metaTags" style="font-size:11px; color:var(--orange); font-family:Share Tech Mono; line-height:1.8; word-break:break-all;"></div>
+              <button onclick="copyText('metaTags')" class="btn btn-secondary" style="font-size:9px; padding:3px 10px; margin-top:8px;">COPY TAGS</button>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 4: DOWNLOAD -->
+    <div class="section-card" id="compositeSection" style="display:none;">
+      <div class="section-header">
+        <div class="section-title"><div class="dot"></div>STEP 4 — CUT &amp; DOWNLOAD</div>
+        <div class="status-chip idle" id="compositeStatus">IDLE</div>
+      </div>
+      <div class="section-body">
+
+        <div id="ffmpegLoadWrap" style="display:none; margin-bottom:16px; padding:12px; background:rgba(255,107,0,0.07); border:1px solid rgba(255,107,0,0.3); font-size:11px; color:var(--orange);">
+          <div style="margin-bottom:6px; font-weight:700; letter-spacing:1px;">LOADING FFMPEG.WASM...</div>
+          <div class="progress-bar-wrap"><div class="progress-bar" id="ffmpegProgress" style="background:var(--orange); width:0%"></div></div>
+          <div id="ffmpegLoadMsg" style="margin-top:6px; color:var(--text2);">Fetching FFmpeg core (~30MB, cached after first load)...</div>
+        </div>
+
+        <!-- OUTPUT SETTINGS -->
+        <div style="background:var(--bg3); border:1px solid var(--border); padding:14px; margin-bottom:14px;">
+          <div style="font-size:10px; letter-spacing:2px; color:var(--text2); margin-bottom:12px; font-weight:700;">OUTPUT SETTINGS</div>
+          <div style="display:flex; gap:24px; flex-wrap:wrap;">
+
+            <!-- ASPECT RATIO -->
+            <div>
+              <div style="font-size:9px; letter-spacing:1px; color:var(--text3); margin-bottom:6px;">ASPECT RATIO</div>
+              <div style="display:flex; gap:6px;">
+                <button id="ratio169" class="btn btn-primary" style="font-size:10px;padding:4px 10px;" onclick="setRatio('16:9')">16:9 Landscape</button>
+                <button id="ratio916" class="btn btn-secondary" style="font-size:10px;padding:4px 10px;" onclick="setRatio('9:16')">9:16 Vertical</button>
+                <button id="ratio910" class="btn btn-secondary" style="font-size:10px;padding:4px 10px;" onclick="setRatio('9:10')">9:10 Feed</button>
+              </div>
+              <div id="ratioNote" style="font-size:9px;color:var(--text3);margin-top:4px;">Standard YouTube · 960×540</div>
+            </div>
+
+            <!-- CAPTIONS -->
+            <div>
+              <div style="font-size:9px; letter-spacing:1px; color:var(--text3); margin-bottom:6px;">TELUGU CAPTIONS</div>
+              <div style="display:flex; gap:6px;">
+                <button id="captionOn" class="btn btn-secondary" style="font-size:10px;padding:4px 10px;" onclick="setCaption(true)">✓ BURN CAPTIONS</button>
+                <button id="captionOff" class="btn btn-primary" style="font-size:10px;padding:4px 10px;" onclick="setCaption(false)">NO CAPTIONS</button>
+              </div>
+              <div id="captionNote" style="font-size:9px;color:var(--text3);margin-top:4px;">Captions burnt into video via Railway cutter</div>
+            </div>
+
+          </div>
+          <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="useRemotion" style="accent-color:#E50914;">
+              <span style="font-size:9px; letter-spacing:2px; color:var(--text2);">
+                ✨ USE REMOTION RENDERER
+              </span>
+              <span style="font-size:9px; color:var(--text3);">— animated strip · word captions · crisp MP4</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 9:10 FRAME IMAGE UPLOAD — shown only when 9:10 selected -->
+        <div id="frameImageSection" style="display:none; background:var(--bg3); border:1px solid rgba(229,9,20,0.3); padding:14px; margin-bottom:14px;">
+          <div style="font-size:10px; letter-spacing:2px; color:#E50914; margin-bottom:4px; font-weight:700;">🎬 9:10 KAIZER FEED LAYOUT</div>
+          <div style="font-size:9px; color:var(--text3); margin-bottom:12px;">Video (top) · Red strip with Telugu text (middle, floating) · Context image (bottom)</div>
+          <div style="display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap;">
+            <div style="flex:1; min-width:180px;">
+              <div style="font-size:9px; letter-spacing:1px; color:var(--text3); margin-bottom:6px;">BOTTOM CONTEXT IMAGE</div>
+              <label style="display:block; padding:10px; background:var(--bg2); border:1px dashed #333; color:#555; font-size:10px; letter-spacing:1px; cursor:pointer; text-align:center; transition:all 0.2s;" id="frameImageLabel" onmouseover="this.style.borderColor='#E50914';this.style.color='#E50914'" onmouseout="this.style.borderColor='#333';this.style.color='#555'">
+                ⬆ UPLOAD IMAGE
+                <input type="file" id="frameImageInput" accept="image/*" style="display:none" onchange="onFrameImageChange(this)">
+              </label>
+              <div id="frameImageName" style="font-size:9px;color:var(--text3);margin-top:4px;"></div>
+            </div>
+            <div style="flex:1; min-width:180px;">
+              <div style="font-size:9px; letter-spacing:1px; color:var(--text3); margin-bottom:6px;">STRIP TEXT (AUTO FROM HIGHLIGHT)</div>
+              <div style="font-size:9px; color:var(--text2); padding:8px; background:var(--bg2); border:1px solid var(--border);">
+                Telugu highlight text auto-fills the red strip.<br>Override below if needed:
+              </div>
+              <input type="text" id="stripOverride" placeholder="Custom strip text (optional)" style="width:100%;margin-top:6px;background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px;font-size:11px;outline:none;">
+            </div>
+          </div>
+        </div>
+          <div style="display:flex; gap:12px; flex-wrap:wrap;">
+            <div style="flex:1; min-width:220px; background:var(--bg3); border:1px solid rgba(240,192,64,0.3); padding:16px;">
+              <div style="font-size:11px; font-weight:700; letter-spacing:2px; color:var(--gold); margin-bottom:6px;">⭐ OPTION A — RAILWAY CUTTER</div>
+              <div style="font-size:10px; color:var(--text2); line-height:1.7; margin-bottom:12px;">
+                Frame-accurate FFmpeg · 9:16 reframe · Caption burn-in<br>
+                Set CUTTER URL in top bar first.
+              </div>
+              <button class="btn btn-gold" id="downloadRawBtn" onclick="downloadRawCuts()" disabled>
+                ⬇ CUT & DOWNLOAD MP4
+              </button>
+            </div>
+            <div style="flex:1; min-width:220px; background:var(--bg3); border:1px solid var(--border); padding:16px;">
+              <div style="font-size:11px; font-weight:700; letter-spacing:2px; color:var(--text2); margin-bottom:6px;">OPTION B — BROWSER RECORD</div>
+              <div style="font-size:10px; color:var(--text2); line-height:1.7; margin-bottom:12px;">
+                Real-time canvas · No server · .webm<br>
+                9:16 reframe + captions supported
+              </div>
+              <button class="btn btn-secondary" id="downloadIndivBtn" onclick="downloadIndividual()" disabled>
+                ⬇ RECORD CLIPS (BROWSER)
+              </button>
+            </div>
+          </div>
+          <div style="margin-top:10px; font-size:10px; color:var(--text3); line-height:1.7; padding:8px 12px; border:1px solid var(--border);">
+            Option A = best quality (Railway FFmpeg). Option B = works from file:// instantly.
+          </div>
+        </div>
+
+        <div id="clipList" style="display:none; margin-top:16px;">
+          <div style="font-size:10px; letter-spacing:2px; color:var(--text2); margin-bottom:8px;">INDIVIDUAL CLIPS</div>
+          <div id="clipListItems" style="display:flex; flex-direction:column; gap:6px;"></div>
+        </div>
+
+        <div id="corsWarning" style="display:none; margin-top:12px; padding:14px 16px; background:rgba(255,107,0,0.08); border:1px solid rgba(255,107,0,0.5); font-size:11px; line-height:1.7;">
+          <div style="color:var(--orange); font-weight:700; letter-spacing:1px; margin-bottom:8px;">⚠ CORS BLOCKED — SARVAM API DOES NOT ALLOW DIRECT BROWSER CALLS</div>
+          <div style="color:var(--text2); margin-bottom:10px;">The Sarvam API requires server-side calls. Two options to fix:</div>
+          <div style="color:var(--text); margin-bottom:6px;"><strong style="color:var(--gold);">OPTION 1 — Deploy 1-line proxy on Railway (recommended, free)</strong></div>
+          <div style="background:#000; padding:10px; font-family:Share Tech Mono,monospace; font-size:10px; color:#00e676; margin-bottom:10px; overflow-x:auto; white-space:pre;">// proxy.js — deploy this on Railway
+const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+const app = express();
+app.use('/sarvam', createProxyMiddleware({
+  target: 'https://api.sarvam.ai',
+  changeOrigin: true,
+  pathRewrite: { '^/sarvam': '' },
+  on: { proxyReq: (req) => { req.setHeader('api-subscription-key', process.env.SARVAM_KEY); } }
+}));
+app.listen(process.env.PORT || 3000);</div>
+          <div style="color:var(--text2); margin-bottom:8px;">Then set <strong style="color:white;">PROXY_URL</strong> in the field below to your Railway URL (e.g. https://my-proxy.railway.app/sarvam)</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <span style="color:var(--text2); font-size:10px; white-space:nowrap;">PROXY URL</span>
+            <input id="proxyUrl" class="api-input" type="text" placeholder="https://your-proxy.railway.app/sarvam" style="width:340px; font-size:11px;" />
+            <button class="btn btn-secondary" style="font-size:10px; padding:6px 12px;" onclick="document.getElementById('corsWarning').style.display='none'; document.getElementById('transcribeBtn').disabled=false; log('info','Proxy set — retrying with proxy URL');">SAVE & RETRY</button>
+          </div>
+          <div style="color:var(--text3); margin-top:8px; font-size:10px;"><strong style="color:var(--text2);">OPTION 2</strong> — Run Mode 3 from a local server (python3 -m http.server) instead of file:// — same-origin bypass.</div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div class="section-header" style="margin-bottom:0;"><div class="section-title">PIPELINE LOG</div></div>
+          <div class="log-box" id="logBox"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ================================================================
+// STATE
+// ================================================================
+let rawFile = null;
+let transcriptSegments = [];
+let highlights = [];
+let selectedHighlights = new Set();
+let compositeReady = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let animFrame = null;
+let currentHlIndex = 0;
+let hlStartTime = 0;
+
+// ================================================================
+// CLOCK
+// ================================================================
+function updateClock() {
+  const now = new Date();
+  const ist = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+  const h = String(ist.getHours()).padStart(2,'0');
+  const m = String(ist.getMinutes()).padStart(2,'0');
+  const s = String(ist.getSeconds()).padStart(2,'0');
+  document.getElementById('clockDisplay').textContent = `IST ${h}:${m}:${s}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ================================================================
+// API KEY WATCHERS
+// ================================================================
+document.getElementById('anthropicKey').addEventListener('input', function() {
+  const el = document.getElementById('anthropicStatus');
+  if (this.value.startsWith('sk-ant-')) {
+    el.textContent = 'SET ✓'; el.className = 'api-status ok';
+  } else {
+    el.textContent = 'UNSET'; el.className = 'api-status empty';
+  }
+  updateButtons();
+});
+
+document.getElementById('sarvamKey').addEventListener('input', function() {
+  const el = document.getElementById('sarvamStatus');
+  if (this.value.length > 8) {
+    el.textContent = 'SET ✓'; el.className = 'api-status ok';
+  } else {
+    el.textContent = 'UNSET'; el.className = 'api-status empty';
+  }
+  updateButtons();
+});
+
+document.getElementById('cutterUrl').addEventListener('input', function() {
+  const el = document.getElementById('cutterStatus');
+  if (this.value.startsWith('http')) {
+    el.textContent = 'SET ✓'; el.className = 'api-status ok';
+  } else {
+    el.textContent = 'UNSET'; el.className = 'api-status empty';
+  }
+});
+
+// ================================================================
+// OUTPUT SETTINGS — ratio + captions
+// ================================================================
+let outputRatio = '16:9';   // '16:9' | '9:16'
+let captionsEnabled = false;
+
+function setRatio(r) {
+  outputRatio = r;
+  document.getElementById('ratio169').className = r === '16:9' ? 'btn btn-primary' : 'btn btn-secondary';
+  document.getElementById('ratio916').className = r === '9:16' ? 'btn btn-primary' : 'btn btn-secondary';
+  document.getElementById('ratio910').className = r === '9:10' ? 'btn btn-primary' : 'btn btn-secondary';
+  document.getElementById('ratio169').style.cssText = 'font-size:10px;padding:4px 10px;';
+  document.getElementById('ratio916').style.cssText = 'font-size:10px;padding:4px 10px;';
+  document.getElementById('ratio910').style.cssText = 'font-size:10px;padding:4px 10px;';
+  const notes = {
+    '16:9': 'Standard YouTube · 960×540',
+    '9:16': 'YouTube Shorts / Instagram Reels · 540×960',
+    '9:10': 'Instagram Feed / Facebook · 540×600 · Kaizer frame layout'
+  };
+  document.getElementById('ratioNote').textContent = notes[r] || '';
+  // Show/hide 9:10 frame image section
+  document.getElementById('frameImageSection').style.display = r === '9:10' ? '' : 'none';
+  log('info', `Output ratio set to ${r}`);
+}
+
+let frameImageFile = null;
+
+function onFrameImageChange(input) {
+  frameImageFile = input.files[0] || null;
+  document.getElementById('frameImageName').textContent = frameImageFile
+    ? `✓ ${frameImageFile.name} (${(frameImageFile.size/1024).toFixed(0)}KB)`
+    : '';
+  log('info', `Frame image: ${frameImageFile?.name || 'none'}`);
+}
+
+function setCaption(on) {
+  captionsEnabled = on;
+  document.getElementById('captionOn').className  = on ? 'btn btn-primary'   : 'btn btn-secondary';
+  document.getElementById('captionOff').className = on ? 'btn btn-secondary' : 'btn btn-primary';
+  document.getElementById('captionOn').style.cssText  = 'font-size:10px;padding:4px 10px;';
+  document.getElementById('captionOff').style.cssText = 'font-size:10px;padding:4px 10px;';
+  document.getElementById('captionNote').textContent = on
+    ? 'Telugu text burnt into bottom of each clip' : 'No captions — clean video';
+  log('info', `Captions ${on ? 'ON' : 'OFF'}`);
+}
+
+async function downloadWithRemotion(selList) {
+  const cutterUrl = getCutterUrl();
+  if (!cutterUrl) { alert('Set CUTTER URL to your Remotion Railway service'); return; }
+
+  setStatus('compositeStatus', 'running', 'REMOTION RENDERING...');
+  log('info', `🎬 Remotion render: ${selList.length} clips | ${outputRatio}`);
+
+  try {
+    const fd = new FormData();
+    fd.append('video', rawFile, rawFile.name);
+    if (frameImageFile) fd.append('bottomImage', frameImageFile, frameImageFile.name);
+
+    const clipsData = selList.map(h => ({
+      startSec: h.start_sec,
+      endSec: h.end_sec,
+      line1: document.getElementById('stripOverride')?.value?.trim() || h.telugu_text?.slice(0, 30) || '',
+      line2: h.telugu_text || '',
+      teluguText: h.telugu_text || '',
+      words: transcriptSegments
+        .filter(s => s.start >= h.start_sec - 0.5 && s.end <= h.end_sec + 0.5)
+        .flatMap(s => s.text.trim().split(' ').map((word, i, arr) => ({
+          word,
+          start: s.start + (i / arr.length) * (s.end - s.start),
+          end: s.start + ((i + 1) / arr.length) * (s.end - s.start),
+        })))
+    }));
+
+    fd.append('data', JSON.stringify({ clips: clipsData, ratio: outputRatio }));
+
+    log('info', 'Uploading to Remotion renderer... (first render takes ~30s for bundle)');
+    const resp = await fetch(`${cutterUrl}/render`, { method: 'POST', body: fd });
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.error || `HTTP ${resp.status}`); }
+
+    const data = await resp.json();
+    log('info', `✓ Rendered ${data.clips} clips in ${data.elapsedSec}s — ${data.sizeMB}MB`);
+
+    // Download
+    const a = document.createElement('a');
+    a.href = cutterUrl + data.downloadUrl;
+    a.download = `kaizer_animated_${Date.now()}.mp4`;
+    a.click();
+    setStatus('compositeStatus', 'done', 'RENDERED ✓');
+
+  } catch(err) {
+    setStatus('compositeStatus', 'error', 'ERROR');
+    log('err', 'Remotion render failed: ' + err.message);
+  }
+}
+
+function getCutterUrl() {
+  const manual = (document.getElementById('cutterUrl').value || '').trim().replace(/\/$/, '');
+  if (manual) return manual;
+  // Auto-detect: if served from Railway, use same origin as cutter
+  if (window.location.protocol !== 'file:' && window.location.hostname !== 'localhost') {
+    return window.location.origin;
+  }
+  return '';
+}
+
+function saveCutterUrl(val) {
+  try { localStorage.setItem('kaizerCutterUrl', val); } catch(e) {}
+}
+
+// On load: restore saved cutter URL or auto-fill if on Railway
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = localStorage.getItem('kaizerCutterUrl');
+    if (saved) {
+      document.getElementById('cutterUrl').value = saved;
+      document.getElementById('cutterStatus').textContent = 'SET ✓';
+      document.getElementById('cutterStatus').className = 'api-status ok';
+    } else if (window.location.protocol !== 'file:' && window.location.hostname !== 'localhost') {
+      // Running on Railway — self-serve
+      document.getElementById('cutterUrl').value = window.location.origin;
+      document.getElementById('cutterStatus').textContent = 'AUTO ✓';
+      document.getElementById('cutterStatus').className = 'api-status ok';
+    }
+  } catch(e) {}
+});
+
+// ── Gemini key watcher ──
+document.getElementById('geminiKey').addEventListener('input', function() {
+  const el = document.getElementById('geminiStatus');
+  if (this.value.startsWith('AIza') && this.value.length > 20) {
+    el.textContent = 'SET ✓'; el.className = 'api-status ok';
+  } else {
+    el.textContent = 'UNSET'; el.className = 'api-status empty';
+  }
+  updateButtons();
+});
+
+// ── Engine toggle ──
+let activeEngine = 'sarvam'; // 'sarvam' | 'gemini'
+
+function setEngine(engine) {
+  activeEngine = engine;
+  const sBtn = document.getElementById('engineSarvam');
+  const gBtn = document.getElementById('engineGemini');
+  const desc = document.getElementById('engineDesc');
+  const tBtn = document.getElementById('transcribeBtn');
+  const hNote = document.getElementById('highlightEngineNote');
+
+  if (engine === 'sarvam') {
+    sBtn.className = 'btn btn-primary'; sBtn.style.fontSize='10px'; sBtn.style.padding='5px 12px';
+    gBtn.className = 'btn btn-secondary'; gBtn.style.fontSize='10px'; gBtn.style.padding='5px 12px';
+    desc.textContent = 'Sarvam Saaras v3 · ₹30/hr · 19% WER · Telugu-optimised · needs Sarvam key';
+    tBtn.textContent = '▶ TRANSCRIBE WITH SARVAM';
+    if (hNote) hNote.textContent = 'Claude Sonnet · Telangana political context · Slang aware · Satire detection';
+  } else {
+    gBtn.className = 'btn btn-primary'; gBtn.style.fontSize='10px'; gBtn.style.padding='5px 12px';
+    sBtn.className = 'btn btn-secondary'; sBtn.style.fontSize='10px'; sBtn.style.padding='5px 12px';
+    desc.innerHTML = '<strong style="color:var(--gold);">ONE CALL</strong> = transcript + highlights + emotion + speakers · ₹0.25/60min · needs Gemini key';
+    tBtn.textContent = '▶ TRANSCRIBE + HIGHLIGHTS (GEMINI)';
+    if (hNote) hNote.textContent = 'Already done by Gemini in step above ↑';
+  }
+  updateButtons();
+}
+
+// ================================================================
+// GEMINI FLASH PIPELINE
+// One call: upload video → transcript + highlights + emotion
+// Replaces both Sarvam + Claude Sonnet steps
+// Uses: Files API upload → generateContent with structured JSON schema
+// ================================================================
+
+const GEMINI_SYSTEM = `You are an expert Telugu news editor for Kaizer News Telugu, a Telugu political news channel in Hyderabad.
+
+TELANGANA POLITICAL CONTEXT:
+- KCR = K. Chandrashekar Rao, BRS founder, former CM, now opposition
+- KTR = KCR's son, BRS working president, aggressive opposition
+- Harish Rao = KCR's nephew, BRS senior leader
+- Revanth Reddy = Current CM Telangana (Congress), fiery speaker
+- Bhatti Vikramarka = Deputy CM (Congress)
+- Pawan Kalyan = Deputy CM Andhra Pradesh, Jana Sena, mass leader
+- Chandrababu Naidu = CM Andhra Pradesh, TDP
+- YS Jagan = YSRCP, former CM AP
+- Akbaruddin Owaisi, Asaduddin Owaisi = AIMIM, Hyderabad
+
+TELANGANA SLANG (these = highlights):
+- "పదవి పోయింది" = lost power, "చప్పట్లు కొట్టండి" = sarcastic taunt
+- "ఫోన్ ట్యాపింగ్" = phone tapping scandal, "ఫారం హౌస్" = KCR farmhouse sarcasm
+- "రాజీనామా చేయండి" = resign demand, "అరెస్ట్" = arrest
+- "అవినీతి రాజ్యం" = corrupt regime
+
+HIGHLIGHT RULES — pick if:
+1. Direct political attack/counter-attack
+2. Scheme/policy announcement
+3. Arrest/legal action
+4. Resignation demand
+5. Scandal reference
+6. Crowd reaction (laughter, walkout, chants)
+7. Quotable one-liner (goes viral)
+8. Satire/sarcasm that lands
+9. Emotional moment (tears, anger, confrontation)
+
+SKIP: greetings, "నమస్కారం", filler, introductions, thank-you speeches.
+
+SATIRE: "చాలా అద్భుతంగా పని చేశారు" by opposition = sarcasm, mark it.
+Importance: 5=viral, 4=strong, 3=good, 2=average.`;
+
+async function startGeminiPipeline() {
+  const geminiKey = document.getElementById('geminiKey').value.trim();
+  if (!geminiKey || !rawFile) return;
+
+  setStatus('transcriptStatus', 'running', 'UPLOADING TO GEMINI...');
+  document.getElementById('transcribeBtn').disabled = true;
+  document.getElementById('transcriptProgress').style.width = '5%';
+  log('info', 'Gemini Flash pipeline started — ONE call does everything');
+  log('info', `File: ${rawFile.name} (${(rawFile.size/1024/1024).toFixed(1)}MB)`);
+  log('info', 'Step 1/3: Uploading to Gemini Files API...');
+
+  try {
+    // ── 1. Upload file to Gemini Files API ──
+    const uploadResp = await fetch(
+      `https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=multipart&key=${geminiKey}`,
+      {
+        method: 'POST',
+        body: (() => {
+          const fd = new FormData();
+          fd.append('metadata', new Blob([JSON.stringify({ file: { displayName: rawFile.name } })], { type: 'application/json' }));
+          fd.append('file', rawFile, rawFile.name);
+          return fd;
+        })()
+      }
+    );
+
+    if (!uploadResp.ok) {
+      const e = await uploadResp.json().catch(() => ({}));
+      throw new Error(`Files API upload failed: ${e.error?.message || uploadResp.status}`);
+    }
+
+    const uploadData = await uploadResp.json();
+    const fileUri = uploadData.file?.uri;
+    const mimeType = uploadData.file?.mimeType || rawFile.type || 'video/mp4';
+    log('info', `✓ Uploaded. File URI: ${fileUri}`);
+    document.getElementById('transcriptProgress').style.width = '30%';
+
+    // ── 2. Wait for file to be ACTIVE ──
+    log('info', 'Step 2/3: Waiting for Gemini to process file...');
+    let fileReady = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const stateResp = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/${uploadData.file.name}?key=${geminiKey}`
+      );
+      const stateData = await stateResp.json();
+      log('info', `  File state: ${stateData.state}`);
+      if (stateData.state === 'ACTIVE') { fileReady = true; break; }
+      if (stateData.state === 'FAILED') throw new Error('Gemini file processing failed');
+    }
+    if (!fileReady) throw new Error('Gemini file not ready after 90s');
+    document.getElementById('transcriptProgress').style.width = '50%';
+
+    // ── 3. ONE generateContent call: transcript + highlights + emotion ──
+    log('info', 'Step 3/3: Gemini analyzing — transcript + highlights + emotion in one call...');
+
+    const schema = {
+      type: 'OBJECT',
+      properties: {
+        segments: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              start_sec: { type: 'NUMBER' },
+              end_sec: { type: 'NUMBER' },
+              speaker: { type: 'STRING' },
+              text: { type: 'STRING' },
+              emotion: { type: 'STRING', enum: ['neutral','angry','emotional','sarcastic','defiant','fearful'] }
+            },
+            required: ['start_sec','end_sec','text','speaker','emotion']
+          }
+        },
+        highlights: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              start_sec: { type: 'NUMBER' },
+              end_sec: { type: 'NUMBER' },
+              telugu_text: { type: 'STRING' },
+              importance: { type: 'NUMBER' },
+              type: { type: 'STRING', enum: ['political','satire','announcement','reaction','legal'] },
+              reason: { type: 'STRING' },
+              emotion: { type: 'STRING' }
+            },
+            required: ['start_sec','end_sec','telugu_text','importance','type','reason','emotion']
+          }
+        }
+      },
+      required: ['segments','highlights']
+    };
+
+    const genResp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: GEMINI_SYSTEM }] },
+          contents: [{
+            parts: [
+              { file_data: { mime_type: mimeType, file_uri: fileUri } },
+              { text: `Transcribe this entire Telugu press meet/public byte video.
+For EVERY spoken segment provide: start_sec, end_sec (MUST be decimal seconds like 12.5, 83.0 — NOT MM:SS format), speaker label, Telugu text, emotion.
+Then identify the top highlights (importance >= 2) from the transcript.
+IMPORTANT: All timestamps MUST be plain decimal numbers in seconds. Example: 65.5 means 1 minute 5.5 seconds. Never use colon format.
+Return ONLY valid JSON matching the schema.` }
+            ]
+          }],
+          generation_config: {
+            response_mime_type: 'application/json',
+            response_schema: schema,
+            temperature: 0.1
+          }
+        })
+      }
+    );
+
+    if (!genResp.ok) {
+      const e = await genResp.json().catch(() => ({}));
+      throw new Error(`Gemini generateContent failed: ${e.error?.message || genResp.status}`);
+    }
+
+    const genData = await genResp.json();
+    document.getElementById('transcriptProgress').style.width = '90%';
+
+    let raw = genData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    raw = raw.replace(/```json|```/g,'').trim();
+    const result = JSON.parse(raw);
+
+    // ── Helper: parse timestamp that might be "MM:SS", "HH:MM:SS", or decimal number ──
+    function parseGeminiTime(t) {
+      if (typeof t === 'number') return t;
+      if (typeof t === 'string') {
+        const parts = t.split(':').map(Number);
+        if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2]; // HH:MM:SS
+        if (parts.length === 2) return parts[0]*60 + parts[1];                  // MM:SS
+        return parseFloat(t) || 0;
+      }
+      return 0;
+    }
+
+    // Populate transcriptSegments
+    transcriptSegments = (result.segments || []).map(s => ({
+      start: parseGeminiTime(s.start_sec),
+      end: parseGeminiTime(s.end_sec),
+      text: `[${s.speaker||'SPK'}] ${s.text}`,
+      emotion: s.emotion
+    }));
+
+    // Populate highlights directly — skip Claude call
+    highlights = (result.highlights || []).map(h => {
+      let s = parseGeminiTime(h.start_sec);
+      let e = parseGeminiTime(h.end_sec);
+      if (s > e) [s, e] = [e, s]; // swap if reversed
+      if (e - s < 1) e = s + 5;   // minimum 1s clip
+      return { ...h, start_sec: s, end_sec: e };
+    }).sort((a,b) => b.importance - a.importance);
+    selectedHighlights = new Set(highlights.map((_,i) => i));
+
+    document.getElementById('transcriptProgress').style.width = '100%';
+    setStatus('transcriptStatus', 'done', `DONE — ${transcriptSegments.length} SEGMENTS`);
+    setStepActive('step2', 'done');
+
+    log('info', `✓ Transcription: ${transcriptSegments.length} segments`);
+    log('info', `✓ Highlights: ${highlights.length} picked by Gemini`);
+
+    const costUSD = (transcriptSegments.reduce((a,s)=>a+(s.end-s.start),0) * 32 / 1_000_000 * 0.30).toFixed(4);
+    log('info', `Cost: ~$${costUSD} (₹${(costUSD*84).toFixed(2)})`);
+
+    renderTranscript();
+    renderHighlights();
+  autoSelectToTarget();
+
+    // Show highlights section + title generator
+    document.getElementById('highlightSection').style.display = '';
+    document.getElementById('titledescSection').style.display = '';
+    document.getElementById('compositeSection').style.display = '';
+    document.getElementById('compositeBtn').disabled = false;
+    document.getElementById('generateMetaBtn').disabled = false;
+    setStepActive('step3', 'done');
+    setStepActive('step4', 'active');
+
+    highlights.forEach((h,i) => log('info', `  #${i+1} [${h.type}] ${h.emotion} imp:${h.importance} — ${h.reason}`));
+
+    // Hide Claude highlight button since Gemini already did it
+    document.getElementById('highlightBtn').textContent = '✓ HIGHLIGHTS DONE BY GEMINI';
+    document.getElementById('highlightBtn').disabled = true;
+
+  } catch(err) {
+    setStatus('transcriptStatus', 'error', 'ERROR');
+    const errDiv = document.getElementById('transcriptError');
+    if (errDiv) { errDiv.textContent = '❌ ' + err.message; errDiv.style.display = ''; }
+    log('err', 'Gemini pipeline failed: ' + err.message);
+    log('warn', 'Check: (1) Gemini API key valid? (2) Gemini API enabled in Google AI Studio? (3) File format supported?');
+    document.getElementById('transcribeBtn').disabled = false;
+  }
+}
+
+function updateButtons() {
+  const hasAnth = document.getElementById('anthropicKey').value.startsWith('sk-ant-');
+  const hasSarvam = document.getElementById('sarvamKey').value.length > 8;
+  const hasGemini = document.getElementById('geminiKey').value.startsWith('AIza');
+  const canTranscribe = rawFile && (activeEngine === 'gemini' ? hasGemini : hasSarvam);
+  document.getElementById('transcribeBtn').disabled = !canTranscribe;
+}
+
+// ================================================================
+// FILE UPLOAD
+// ================================================================
+// drag/drop on upload zone
+document.addEventListener('DOMContentLoaded', () => {
+  const zone = document.getElementById('uploadZone');
+  if (!zone) return;
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+});
+
+function handleFile(file) {
+  rawFile = file;
+
+  // Mark upload zone as done
+  const zone = document.getElementById('uploadZone');
+  if (zone) zone.classList.add('has-file');
+
+  // Fill metadata
+  document.getElementById('fileName').textContent = file.name;
+  document.getElementById('fileSize').textContent = (file.size / 1024 / 1024).toFixed(1) + ' MB';
+  document.getElementById('fileType').textContent = file.type || 'video/*';
+
+  // Load into preview + hidden source video
+  const url = URL.createObjectURL(file);
+  const vid = document.getElementById('videoPreview');
+  const srcVid = document.getElementById('sourceVideo');
+  vid.src = url;
+  srcVid.src = url;
+  vid.onloadedmetadata = () => {
+    document.getElementById('fileDuration').textContent = formatTime(Math.round(vid.duration));
+  };
+
+  // Show preview panel
+  const wrap = document.getElementById('previewWrap');
+  wrap.style.display = 'flex';  // direct style — don't rely on class toggle
+
+  // Pipeline state
+  setStepActive('step1', 'done');
+  setStepActive('step2', 'active');
+  updateButtons();
+
+  // Show transcript section
+  document.getElementById('transcriptSection').style.display = '';
+
+  console.log('File loaded:', file.name);
+  // Delay log() until logBox exists (compositeSection may still be hidden)
+  setTimeout(() => log('info', `File loaded: ${file.name} (${(file.size/1024/1024).toFixed(1)}MB)`), 100);
+}
+
+function formatTime(sec) {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
+// ================================================================
+// STEP 2: TRANSCRIPTION — SARVAM SAARAS V3
+// REST API /speech-to-text — max 30s per chunk
+// Strategy: decode audio → split into 25s chunks → send each → reassemble
+// Endpoint: POST https://api.sarvam.ai/speech-to-text
+// Auth header: api-subscription-key
+// Response: { transcript, timestamps: { words[], start_time_seconds[], end_time_seconds[] },
+//             diarized_transcript: { entries: [{transcript, start_time_seconds, end_time_seconds, speaker_id}] } }
+// ================================================================
+async function startTranscription() {
+  if (activeEngine === 'gemini') return startGeminiPipeline();
+
+  // Sarvam — route through Railway cutter (/transcribe endpoint)
+  // Full file, Batch API, no chunking, clean timestamps
+  const sarvamKey  = document.getElementById('sarvamKey').value;
+  const cutterUrl  = getCutterUrl();
+  if (!sarvamKey || !rawFile) return;
+
+  if (cutterUrl) {
+    return startSarvamViaRailway(sarvamKey, cutterUrl);
+  }
+
+  // Fallback: browser chunking (old method) if no Railway URL set
+  log('warn', 'No CUTTER URL set — falling back to browser chunking (timestamp accuracy reduced)');
+  log('warn', 'Deploy kaizer-cutter to Railway and set CUTTER URL for full-file Sarvam Batch API');
+  return startSarvamBrowserChunked(sarvamKey);
+}
+
+// ── Sarvam via Railway /transcribe — full file, Batch API ──
+async function startSarvamViaRailway(sarvamKey, cutterUrl) {
+  setStatus('transcriptStatus', 'running', 'UPLOADING TO RAILWAY...');
+  document.getElementById('transcribeBtn').disabled = true;
+  log('info', 'Sarvam Batch API via Railway — full file, no chunking');
+  log('info', `File: ${rawFile.name} (${(rawFile.size/1024/1024).toFixed(1)}MB)`);
+
+  try {
+    const fd = new FormData();
+    fd.append('file', rawFile, rawFile.name);
+    fd.append('sarvamKey', sarvamKey);
+    fd.append('language', 'te-IN');
+
+    document.getElementById('transcriptProgress').style.width = '10%';
+    setStatus('transcriptStatus', 'running', 'SARVAM BATCH PROCESSING...');
+    log('info', 'Railway extracting audio + submitting to Sarvam Batch API...');
+    log('info', 'Polling every 5s — press meets take 2-5 mins...');
+
+    const resp = await fetch(`${cutterUrl}/transcribe`, { method: 'POST', body: fd });
+    document.getElementById('transcriptProgress').style.width = '90%';
+
+    if (!resp.ok) {
+      const e = await resp.json().catch(()=>({}));
+      throw new Error(e.error || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    transcriptSegments = (data.segments || []).map(s => ({
+      start: s.start, end: s.end,
+      text: `[${s.speaker||'SPK0'}] ${s.text}`, emotion: ''
+    }));
+
+    document.getElementById('transcriptProgress').style.width = '100%';
+    setStatus('transcriptStatus', 'done', `DONE — ${transcriptSegments.length} SEGMENTS`);
+    setStepActive('step2', 'done');
+    setStepActive('step3', 'active');
+
+    renderTranscript();
+    document.getElementById('highlightBtn').disabled = false;
+    log('info', `✓ Full-file transcription: ${transcriptSegments.length} segments (no chunking — clean timestamps)`);
+    const costRs = Math.ceil((document.getElementById('videoPreview').duration||0) / 3600 * 30);
+    log('info', `Cost: ~₹${costRs} (₹30/hr Sarvam Batch)`);
+
+  } catch(err) {
+    setStatus('transcriptStatus', 'error', 'ERROR');
+    const errDiv = document.getElementById('transcriptError');
+    if (errDiv) { errDiv.textContent = '❌ ' + err.message; errDiv.style.display = ''; }
+    log('err', 'Sarvam via Railway failed: ' + err.message);
+    document.getElementById('transcribeBtn').disabled = false;
+  }
+}
+
+async function startSarvamBrowserChunked(sarvamKey) {
+  if (!sarvamKey || !rawFile) return;
+
+  setStatus('transcriptStatus', 'running', 'DECODING AUDIO...');
+  document.getElementById('transcribeBtn').disabled = true;
+  log('info', 'Starting Sarvam Saaras v3 transcription...');
+  log('info', `Endpoint: POST /speech-to-text | Model: saaras:v3 | Lang: te-IN | Mode: transcribe`);
+
+  const CHUNK_SEC = 25; // REST API limit is 30s, use 25s for safety
+  const SAMPLE_RATE = 16000; // Sarvam works best at 16kHz
+
+  try {
+    // ── A: Decode video audio into AudioBuffer ──
+    log('info', 'Reading audio from video file...');
+    setStatus('transcriptStatus', 'running', 'DECODING AUDIO...');
+    document.getElementById('transcriptProgress').style.width = '5%';
+
+    const arrayBuf = await rawFile.arrayBuffer();
+    const audioCtx = new OfflineAudioContext(1, 1, SAMPLE_RATE);
+    let audioBuffer;
+    try {
+      audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+    } catch(e) {
+      throw new Error(`Audio decode failed: ${e.message}. Try MP4/MP3/WAV format.`);
+    }
+
+    const totalSec = audioBuffer.duration;
+    const totalChunks = Math.ceil(totalSec / CHUNK_SEC);
+    log('info', `Audio decoded: ${totalSec.toFixed(1)}s → ${totalChunks} chunks of ${CHUNK_SEC}s each`);
+    const costRs = Math.ceil(totalSec / 3600 * 30);
+    log('info', `Estimated cost: ~₹${costRs} (₹30/hr)`);
+
+    // ── B: Process each chunk ──
+    transcriptSegments = [];
+
+    for (let i = 0; i < totalChunks; i++) {
+      const chunkStart = i * CHUNK_SEC;
+      const chunkEnd = Math.min(chunkStart + CHUNK_SEC, totalSec);
+      const chunkDur = chunkEnd - chunkStart;
+
+      const pct = 10 + ((i / totalChunks) * 85);
+      document.getElementById('transcriptProgress').style.width = pct + '%';
+      setStatus('transcriptStatus', 'running', `CHUNK ${i+1}/${totalChunks} — ${formatTime(chunkStart)}`);
+      log('info', `Chunk ${i+1}/${totalChunks}: ${formatTime(chunkStart)} → ${formatTime(chunkEnd)}`);
+
+      // Slice AudioBuffer for this chunk
+      const chunkSamples = Math.round(chunkDur * SAMPLE_RATE);
+      const startSample = Math.round(chunkStart * SAMPLE_RATE);
+      const offCtx = new OfflineAudioContext(1, chunkSamples, SAMPLE_RATE);
+      const bufSrc = offCtx.createBufferSource();
+      bufSrc.buffer = audioBuffer;
+      bufSrc.connect(offCtx.destination);
+      bufSrc.start(0, chunkStart, chunkDur);
+      const chunkBuf = await offCtx.startRendering();
+
+      // Convert to WAV blob
+      const wavBlob = audioBufferToWav(chunkBuf);
+
+      // Send to Sarvam REST API
+      const formData = new FormData();
+      formData.append('file', wavBlob, `chunk_${i}.wav`);
+      formData.append('model', 'saaras:v3');
+      formData.append('language_code', 'te-IN');
+      formData.append('mode', 'transcribe');
+
+      let resp;
+      try {
+        resp = await fetch(getSarvamUrl(), {
+          method: 'POST',
+          headers: { 'api-subscription-key': sarvamKey },
+          body: formData
+        });
+      } catch(fetchErr) {
+        const msg = fetchErr.message || '';
+        if (msg === 'Failed to fetch' || msg.includes('NetworkError') || msg.includes('CORS')) {
+          showCorsWarning();
+          throw new Error('CORS blocked — see the yellow warning box above the log for fix instructions.');
+        }
+        throw new Error(`Network error on chunk ${i+1}: ${msg}`);
+      }
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`Sarvam API error on chunk ${i+1}: HTTP ${resp.status} — ${errText}`);
+      }
+
+      const data = await resp.json();
+
+      // Parse response — prefer diarized_transcript entries, fallback to timestamps, fallback to plain transcript
+      const segs = parseSarvamChunk(data, chunkStart);
+      transcriptSegments.push(...segs);
+      log('info', `  ✓ ${segs.length} segments, ${segs.map(s=>s.text).join(' ').slice(0,60)}...`);
+
+      // 1.1s delay between chunks — stays under Sarvam Starter 60 req/min limit
+      if (i < totalChunks - 1) await sleep(1100);
+    }
+
+    document.getElementById('transcriptProgress').style.width = '100%';
+    setStatus('transcriptStatus', 'done', `DONE — ${transcriptSegments.length} SEGMENTS`);
+    setStepActive('step2', 'done');
+    setStepActive('step3', 'active');
+
+    // ── Detect silence offset at video start ──
+    // Scans first 10s of audio to find when speech actually begins
+    // Subtracts that offset from all segment timestamps
+    const silenceOffset = detectSilenceOffset(audioBuffer);
+    if (silenceOffset > 0.1) {
+      log('warn', `Silence detected at video start: ${silenceOffset.toFixed(2)}s — adjusting all timestamps`);
+      transcriptSegments.forEach(s => {
+        s.start = Math.max(0, s.start - silenceOffset);
+        s.end = Math.max(0, s.end - silenceOffset);
+      });
+    } else {
+      log('info', `No significant silence at start (${silenceOffset.toFixed(2)}s) — timestamps unchanged`);
+    }
+
+    renderTranscript();
+    document.getElementById('highlightBtn').disabled = false;
+    log('info', `✓ Full transcription: ${transcriptSegments.length} segments across ${totalSec.toFixed(0)}s`);
+
+  } catch (err) {
+    setStatus('transcriptStatus', 'error', 'ERROR');
+    // Show error visibly even if logBox is hidden
+    const errDiv = document.getElementById('transcriptError');
+    if (errDiv) { errDiv.textContent = '❌ ' + err.message; errDiv.style.display = ''; }
+    alert('Transcription error:\n\n' + err.message);
+    console.error('Transcription error:', err);
+    log('warn', 'Tips: (1) Check Sarvam API key at dashboard.sarvam.ai (2) Ensure video has audio track (3) Try MP4 format');
+    document.getElementById('transcribeBtn').disabled = false;
+  }
+}
+
+// ── Parse one chunk's Sarvam response into segments with absolute timestamps ──
+function parseSarvamChunk(data, offsetSec) {
+  // Priority 1: diarized_transcript.entries (most detailed)
+  if (data.diarized_transcript?.entries?.length) {
+    return data.diarized_transcript.entries.map(e => ({
+      start: (e.start_time_seconds || 0) + offsetSec,
+      end: (e.end_time_seconds || 0) + offsetSec,
+      text: `[SPK${e.speaker_id || '0'}] ${e.transcript || ''}`.trim()
+    })).filter(s => s.text.replace(/\[SPK\d+\]\s*/,'').trim());
+  }
+
+  // Priority 2: timestamps object with word arrays
+  if (data.timestamps?.words?.length) {
+    const words = data.timestamps.words;
+    const starts = data.timestamps.start_time_seconds || [];
+    const ends = data.timestamps.end_time_seconds || [];
+    // Group into ~5s segments
+    const segs = [];
+    let seg = { start: null, end: null, words: [] };
+    words.forEach((w, i) => {
+      if (seg.start === null) seg.start = (starts[i] || 0) + offsetSec;
+      seg.words.push(w);
+      seg.end = (ends[i] || 0) + offsetSec;
+      if (seg.words.length >= 8 || i === words.length - 1) {
+        segs.push({ start: seg.start, end: seg.end, text: seg.words.join(' ') });
+        seg = { start: null, end: null, words: [] };
+      }
+    });
+    return segs.filter(s => s.text.trim());
+  }
+
+  // Priority 3: plain transcript — split by sentence, estimate timing
+  if (data.transcript) {
+    const sentences = data.transcript.split(/[।.!?\n]+/).filter(s => s.trim());
+    const segDur = 25 / Math.max(sentences.length, 1);
+    return sentences.map((text, i) => ({
+      start: offsetSec + i * segDur,
+      end: offsetSec + (i + 1) * segDur,
+      text: text.trim()
+    }));
+  }
+
+  return [];
+}
+
+// ── Convert AudioBuffer → WAV Blob ──
+function audioBufferToWav(buf) {
+  const numCh = 1;
+  const sampleRate = buf.sampleRate;
+  const samples = buf.getChannelData(0);
+  const dataLen = samples.length * 2;
+  const ab = new ArrayBuffer(44 + dataLen);
+  const view = new DataView(ab);
+  const writeStr = (o, s) => { for (let i=0;i<s.length;i++) view.setUint8(o+i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataLen, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);           // PCM
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, 'data');
+  view.setUint32(40, dataLen, true);
+  let o = 44;
+  for (let i = 0; i < samples.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+// ── Detect how many seconds of silence exist at video start ──
+// Scans RMS energy in 50ms windows, returns time of first window above threshold
+function detectSilenceOffset(audioBuffer, thresholdRMS = 0.01, scanSecs = 10) {
+  const samples = audioBuffer.getChannelData(0);
+  const sr = audioBuffer.sampleRate;
+  const windowSize = Math.round(0.05 * sr); // 50ms windows
+  const maxScan = Math.min(samples.length, scanSecs * sr);
+
+  for (let i = 0; i < maxScan; i += windowSize) {
+    let sum = 0;
+    const end = Math.min(i + windowSize, maxScan);
+    for (let j = i; j < end; j++) sum += samples[j] * samples[j];
+    const rms = Math.sqrt(sum / (end - i));
+    if (rms > thresholdRMS) {
+      // Found speech — return start of this window, minus tiny buffer
+      return Math.max(0, (i / sr) - 0.1);
+    }
+  }
+  return 0; // no silence found
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function renderTranscript() {
+  const container = document.getElementById('transcriptDisplay');
+  container.innerHTML = '';
+  transcriptSegments.forEach(seg => {
+    const div = document.createElement('div');
+    div.className = 'transcript-seg';
+    div.innerHTML = `
+      <div class="seg-time">${formatTime(seg.start)} → ${formatTime(seg.end)}</div>
+      <div class="seg-text">${seg.text.trim()}</div>
+    `;
+    container.appendChild(div);
+  });
+  document.getElementById('highlightSection').style.display = '';
+}
+
+// ================================================================
+// STEP 3: HIGHLIGHT PICKING — FULL TELANGANA POLITICAL CONTEXT
+// ================================================================
+const TELANGANA_SYSTEM_PROMPT = `You are an expert Telugu news editor for Kaizer News Telugu — a high-energy Telugu political news channel in Hyderabad.
+
+TELANGANA POLITICAL CONTEXT — KNOW THESE FIGURES:
+- KCR = K. Chandrashekar Rao, founder BRS (Bharat Rashtra Samithi), former CM Telangana 10 years. Controversial, big announcements, often uses metaphors. Now opposition.
+- KTR = K. Taraka Rama Rao, KCR's son, BRS working president. Aggressive opposition, tech-focused, targets Revanth.
+- Harish Rao = KCR's nephew, BRS senior leader, finance minister formerly. Often fact-based attacks.
+- Revanth Reddy = Current CM Telangana (Congress). Known for fiery speeches, direct attacks on BRS. Uses "cheppindi chestha" style.
+- Uttam Kumar Reddy = TPCC chief. Congress.
+- Bhatti Vikramarka = Deputy CM Telangana (Congress).
+- Pawan Kalyan = Deputy CM Andhra Pradesh, Jana Sena. Popular mass leader. Anything he says is viral.
+- Chandrababu Naidu (CBN) = CM Andhra Pradesh, TDP. Major regional figure.
+- YS Jagan = YSRCP, former CM AP. Opposition in AP.
+- YS Sharmila = Congress, Jagan's sister, recently active in Telangana politics.
+- Akbaruddin Owaisi = AIMIM, Hyderabad. Strong constituency, controversial statements.
+- Asaduddin Owaisi = AIMIM, Parliament, Hyderabad. National-level.
+
+COMMON TELANGANA POLITICAL SLANG & PHRASES (these = highlights):
+- "పదవి పోయింది" = lost power (said about KCR/BRS)
+- "చప్పట్లు కొట్టండి" = clap your hands (sarcastic taunt)
+- "ప్రజలు తేల్చారు" = people have decided
+- "అవినీతి రాజ్యం" = corrupt regime
+- "వంద రోజులు" / "ఆరు నెలలు" = performance deadlines
+- "ఫోన్ ట్యాపింగ్" = phone tapping scandal (BRS vs Congress)
+- "ఫారం హౌస్" = farmhouse (KCR's farmhouse reference, usually sarcasm)
+- "డబుల్ బెడ్రూమ్" = housing scheme controversy
+- "మేడారం" = Sammakka Sarakka jatara, political pilgrimage
+- "గెలుపు పండుగ" = victory celebration
+- "రాజీనామా చేయండి" = resign (demand)
+- "అరెస్ట్" = arrest (always high priority)
+- "దావా" = case filed
+
+SATIRE DETECTION — these phrases SOUND positive but ARE sarcastic:
+- "చాలా అద్భుతంగా పని చేశారు" said by opposition = sarcasm, pick it
+- "నిజంగా మీరు గొప్ప నాయకుడు" in press meet = likely sarcasm
+- Laughter in crowd after a statement = sarcasm/satire moment
+- "[నేత పేరు] గారు చాలా చేశారు" by rival = pick it, it's satire
+
+WHAT MAKES A HIGHLIGHT — pick if ANY of these:
+1. Direct attack/counter-attack between political parties
+2. Announcement of scheme / policy / promise
+3. Arrest / case / legal action
+4. Resignation demand
+5. Scandal reference (phone tapping, farmhouse, corruption)
+6. Crowd reaction moment (laughter, chants, walkout)
+7. Key statistics / numbers quoted
+8. Emotional moment — tears, anger, confrontation
+9. Quotable one-liner (the kind that goes viral on Twitter/X)
+10. Satire / sarcasm that lands
+
+SKIP: Greetings, "నమస్కారం", thank you speeches, repetitive filler, "మీడియాకు స్వాగతం", boring introductions.
+
+Return ONLY valid JSON array. No markdown, no preamble. Format:
+[
+  {
+    "start_sec": 12.5,
+    "end_sec": 28.0,
+    "telugu_text": "full Telugu text of this segment",
+    "importance": 5,
+    "type": "political|satire|announcement|reaction|legal",
+    "reason": "short English reason why this is a highlight"
+  }
+]
+
+Importance: 5=viral worthy, 4=strong, 3=good, 2=average, 1=mild. Minimum importance: 2.
+Order by importance descending.`;
+
+async function pickHighlights() {
+  const anthropicKey = document.getElementById('anthropicKey').value;
+  if (!anthropicKey || !transcriptSegments.length) return;
+
+  setStatus('highlightStatus', 'running', 'CLAUDE ANALYZING...');
+  document.getElementById('highlightBtn').disabled = true;
+  log('info', 'Sending transcript to Claude Opus with Telangana political context...');
+
+  try {
+    // Build transcript with timestamps for Claude
+    const transcriptText = transcriptSegments.map(s =>
+      `[${s.start.toFixed(1)}s - ${s.end.toFixed(1)}s] ${s.text.trim()}`
+    ).join('\n');
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        system: TELANGANA_SYSTEM_PROMPT,
+        messages: [{
+          role: 'user',
+          content: `Here is the timestamped transcript from a Telugu press meet / public byte. Pick the best highlights:\n\n${transcriptText}`
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    let raw = data.content[0].text.trim();
+
+    // Strip any markdown fences
+    raw = raw.replace(/```json|```/g, '').trim();
+
+    highlights = JSON.parse(raw);
+    selectedHighlights = new Set(highlights.map((_, i) => i));
+
+    setStatus('highlightStatus', 'done', `${highlights.length} HIGHLIGHTS FOUND`);
+    setStepActive('step3', 'done');
+    setStepActive('step4', 'active');
+
+    renderHighlights();
+  autoSelectToTarget();
+    document.getElementById('compositeSection').style.display = '';
+    document.getElementById('compositeBtn').disabled = false;
+    // Show title/desc generator
+    document.getElementById('titledescSection').style.display = '';
+    document.getElementById('generateMetaBtn').disabled = false;
+    log('info', `Claude found ${highlights.length} highlights`);
+    highlights.forEach((h, i) => log('info', `  #${i+1} [${h.type}] imp:${h.importance} — ${h.reason}`));
+
+  } catch (err) {
+    setStatus('highlightStatus', 'error', 'ERROR');
+    log('err', `Claude failed: ${err.message}`);
+    document.getElementById('highlightBtn').disabled = false;
+  }
+}
+
+function renderHighlights() {
+  const list = document.getElementById('highlightList');
+  list.innerHTML = '';
+
+  highlights.forEach((h, i) => {
+    const stars = '★'.repeat(h.importance) + '☆'.repeat(5 - h.importance);
+    const duration = (h.end_sec - h.start_sec).toFixed(1);
+    const typeClass = { political:'political', satire:'satire', announcement:'announcement', reaction:'reaction', legal:'political' }[h.type] || 'political';
+
+    const div = document.createElement('div');
+    div.className = 'highlight-item selected';
+    div.dataset.index = i;
+    div.innerHTML = `
+      <div class="hi-importance">
+        <div class="hi-score">${h.importance}</div>
+        <div class="hi-stars">${stars}</div>
+      </div>
+      <div class="hi-body">
+        <div class="hi-timing">
+          ${formatTime(h.start_sec)} → ${formatTime(h.end_sec)} &nbsp;·&nbsp; ${duration}s
+          &nbsp;<span class="hi-badge ${typeClass}">${h.type.toUpperCase()}</span>
+        </div>
+        <div class="hi-text">${h.telugu_text}</div>
+        <div class="hi-reason">🔍 ${h.reason}</div>
+      </div>
+    `;
+    div.addEventListener('click', () => toggleHighlight(i, div));
+    list.appendChild(div);
+  });
+
+  updateSelectionCount();
+}
+
+function toggleHighlight(i, el) {
+  if (selectedHighlights.has(i)) {
+    selectedHighlights.delete(i);
+    el.classList.remove('selected');
+  } else {
+    selectedHighlights.add(i);
+    el.classList.add('selected');
+  }
+  updateSelectionCount();
+}
+
+function selectAllHighlights() {
+  highlights.forEach((_, i) => {
+    selectedHighlights.add(i);
+    document.querySelectorAll('.highlight-item')[i]?.classList.add('selected');
+  });
+  updateSelectionCount();
+}
+
+function deselectAllHighlights() {
+  selectedHighlights.clear();
+  document.querySelectorAll('.highlight-item').forEach(el => el.classList.remove('selected'));
+  updateSelectionCount();
+}
+
+function updateSelectionCount() {
+  const sel = selectedHighlights.size;
+  document.getElementById('selectedCount').textContent = `${sel} selected`;
+  const totalSec = Array.from(selectedHighlights).reduce((acc, i) => acc + (highlights[i].end_sec - highlights[i].start_sec), 0);
+  document.getElementById('totalDuration').textContent = `${formatTime(totalSec)} total`;
+
+  // Show warning if over target
+  const target = getTargetDuration();
+  const targetEl = document.getElementById('targetDurationInfo');
+  if (targetEl && target) {
+    const over = totalSec > target.targetSec;
+    targetEl.style.color = over ? 'var(--red2)' : 'var(--green)';
+    targetEl.textContent = `TARGET: ${formatTime(target.targetSec)} (${target.rule}) — currently ${formatTime(totalSec)} ${over ? '⚠ over' : '✓'}`;
+  }
+
+  document.getElementById('compositeBtn').disabled = sel === 0;
+  enableDownloadButtons();
+}
+
+// ── Smart target duration based on video length ──
+function getTargetDuration() {
+  const vid = document.getElementById('videoPreview');
+  const videoDur = vid?.duration || 0;
+  if (!videoDur) return null;
+
+  if (videoDur < 60) {
+    return { targetSec: 25, rule: 'video <1min → 25s reel' };
+  } else if (videoDur < 180) {
+    return { targetSec: Math.round(videoDur * 0.25), rule: `video 1-3min → 25% = ${Math.round(videoDur * 0.25)}s` };
+  } else if (videoDur < 1800) {
+    return { targetSec: Math.min(180, Math.round(videoDur * 0.25)), rule: `video 3-30min → 25% max 3min` };
+  } else {
+    return { targetSec: Math.min(180, Math.round(videoDur * 0.10)), rule: `video >30min → 10% max 3min` };
+  }
+}
+
+// ── Auto-select highlights to hit target duration ──
+function autoSelectToTarget() {
+  const target = getTargetDuration();
+  if (!target) { log('warn', 'No video loaded yet'); return; }
+
+  const sorted = highlights
+    .map((h, i) => ({ i, dur: h.end_sec - h.start_sec, imp: h.importance }))
+    .sort((a, b) => b.imp - a.imp || b.dur - a.dur); // highest importance first
+
+  selectedHighlights.clear();
+  document.querySelectorAll('.highlight-item').forEach(el => el.classList.remove('selected'));
+
+  let total = 0;
+  for (const item of sorted) {
+    const clipDur = item.dur;
+    if (total + clipDur <= target.targetSec + 5) { // 5s tolerance
+      selectedHighlights.add(item.i);
+      document.querySelectorAll('.highlight-item')[item.i]?.classList.add('selected');
+      total += clipDur;
+    }
+    if (total >= target.targetSec) break;
+  }
+
+  updateSelectionCount();
+  log('info', `🎯 Auto-selected ${selectedHighlights.size} highlights → ${formatTime(total)} (target: ${formatTime(target.targetSec)})`);
+  log('info', `Rule: ${target.rule}`);
+}
+
+function showDownloadStep() {
+  document.getElementById('compositeSection').style.display = '';
+  setStepActive('step4', 'active');
+  enableDownloadButtons();
+  log('info', `Ready — ${selectedHighlights.size} highlights selected. Choose download option.`);
+  setStatus('compositeStatus', 'idle', 'CHOOSE DOWNLOAD OPTION');
+  // Scroll to it
+  document.getElementById('compositeSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// ================================================================
+// STEP 4: CLIP CUTTER — Pure browser MediaRecorder (no FFmpeg/Workers)
+// Works from file:// and any origin. Records each highlight in real-time.
+// Each clip: seek video → record canvas+audio → stop at end_sec → webm blob
+// ================================================================
+
+// ── Record one clip from the source video ──
+// canplay-based: waits for decoder to fully load before recording starts
+function recordClip(videoEl, startSec, endSec, captionText) {
+  const PREROLL = 4.0;
+  const TAIL    = 1.5;
+  const clipStart = Math.max(0, startSec - PREROLL);
+  const clipEnd   = endSec + TAIL;
+  const is916 = outputRatio === '9:16';
+  const is910 = outputRatio === '9:10';
+
+  // Canvas dims
+  const CW = (is916 || is910) ? 540 : 960;
+  const CH = is916 ? 960 : is910 ? 600 : 540;
+
+  return new Promise((resolve, reject) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = CW; canvas.height = CH;
+    const ctx = canvas.getContext('2d');
+
+    videoEl.muted = false;
+    videoEl.pause();
+    videoEl.currentTime = clipStart;
+
+    const onCanPlay = () => {
+      videoEl.removeEventListener('canplay', onCanPlay);
+      videoEl.removeEventListener('error', onError);
+
+      const canvasStream = canvas.captureStream(30);
+      const merged = new MediaStream();
+      canvasStream.getVideoTracks().forEach(t => merged.addTrack(t));
+      try {
+        const vs = videoEl.captureStream ? videoEl.captureStream() : videoEl.mozCaptureStream?.();
+        if (vs) vs.getAudioTracks().forEach(t => merged.addTrack(t));
+      } catch(e) {}
+
+      const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']
+        .find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+
+      const recorder = new MediaRecorder(merged, { mimeType: mime });
+      const chunks = [];
+      recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }));
+      recorder.onerror = e => reject(e.error);
+
+      let rafId;
+      function drawFrame() {
+        ctx.clearRect(0, 0, CW, CH);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, CW, CH);
+
+        if (is916 || is910) {
+          // Portrait/square crop: scale to fill height, crop sides
+          const srcW = videoEl.videoWidth || 960;
+          const srcH = videoEl.videoHeight || 540;
+          const scale = CH / srcH;
+          const drawW = srcW * scale;
+          const offsetX = (CW - drawW) / 2;
+          ctx.drawImage(videoEl, offsetX, 0, drawW, CH);
+        } else {
+          ctx.drawImage(videoEl, 0, 0, CW, CH);
+        }
+
+        // Caption burn-in
+        if (captionsEnabled && captionText) {
+          const capY = CH - (is916 ? 160 : 80);
+          const capH = is916 ? 140 : 70;
+          // Background bar
+          ctx.fillStyle = 'rgba(0,0,0,0.75)';
+          ctx.fillRect(0, capY, CW, capH);
+          // Telugu text
+          const fontSize = is916 ? 28 : 18;
+          ctx.font = `600 ${fontSize}px "Noto Sans Telugu", sans-serif`;
+          ctx.fillStyle = 'white';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          // Word-wrap
+          const words = captionText.split(' ');
+          const maxW = CW - 40;
+          let line = '';
+          const lines = [];
+          for (const w of words) {
+            const test = line + (line ? ' ' : '') + w;
+            if (ctx.measureText(test).width > maxW && line) {
+              lines.push(line); line = w;
+            } else line = test;
+          }
+          if (line) lines.push(line);
+          lines.slice(0, 2).forEach((l, i) => {
+            ctx.fillText(l, CW/2, capY + capH/2 + (i - (lines.length-1)/2) * (fontSize + 6));
+          });
+        }
+
+        if (!videoEl.paused && videoEl.currentTime < clipEnd) {
+          rafId = requestAnimationFrame(drawFrame);
+        }
+      }
+
+      recorder.start(100);
+      videoEl.play().then(() => {
+        drawFrame();
+        const checkEnd = setInterval(() => {
+          if (videoEl.currentTime >= clipEnd || videoEl.ended) {
+            clearInterval(checkEnd);
+            cancelAnimationFrame(rafId);
+            videoEl.pause();
+            if (recorder.state === 'recording') recorder.stop();
+          }
+        }, 80);
+        setTimeout(() => {
+          clearInterval(checkEnd);
+          cancelAnimationFrame(rafId);
+          videoEl.pause();
+          if (recorder.state === 'recording') recorder.stop();
+        }, (clipEnd - clipStart + 8) * 1000);
+      }).catch(reject);
+    };
+
+    const onError = () => {
+      videoEl.removeEventListener('canplay', onCanPlay);
+      videoEl.removeEventListener('error', onError);
+      reject(new Error('Video seek/load error'));
+    };
+
+    videoEl.addEventListener('canplay', onCanPlay, { once: true });
+    videoEl.addEventListener('error', onError, { once: true });
+  });
+}
+
+// ── OPTION A: Railway FFmpeg cutter ──
+async function downloadRawCuts() {
+  const cutterUrl = getCutterUrl();
+  if (!cutterUrl) {
+    alert('Set CUTTER URL in the top bar first.\nDeploy kaizer-cutter to Railway and paste the URL.');
+    return;
+  }
+  const selList = Array.from(selectedHighlights).sort((a,b)=>a-b).map(i => highlights[i]);
+  if (!selList.length || !rawFile) return;
+
+  document.getElementById('downloadRawBtn').disabled = true;
+  setStatus('compositeStatus', 'running', 'UPLOADING TO CUTTER...');
+  log('info', `Sending ${rawFile.name} (${(rawFile.size/1024/1024).toFixed(1)}MB) + ${selList.length} clips to Railway cutter...`);
+  log('info', 'Frame-accurate FFmpeg cuts with 1.5s preroll each.');
+
+  try {
+    const formData = new FormData();
+    formData.append('file', rawFile, rawFile.name);
+    formData.append('clips', JSON.stringify(selList));
+    formData.append('preroll', '4.0');
+    formData.append('tail', '1.5');
+    formData.append('ratio', outputRatio);
+    formData.append('captions', captionsEnabled ? '1' : '0');
+    // 9:10 Kaizer frame layout
+    if (outputRatio === '9:10') {
+      if (frameImageFile) formData.append('frameImage', frameImageFile, frameImageFile.name);
+      const override = document.getElementById('stripOverride')?.value?.trim();
+      if (override) formData.append('stripOverride', override);
+    }
+
+    // ── If Remotion renderer is available, use it for animated output ──
+    const useRemotion = document.getElementById('useRemotion')?.checked;
+    if (useRemotion) {
+      return downloadWithRemotion(selList);
+    }
+    // Send highlights text for caption burn-in
+    if (captionsEnabled) {
+      formData.append('captionData', JSON.stringify(selList.map(h => ({
+        start_sec: h.start_sec,
+        end_sec: h.end_sec,
+        text: h.telugu_text
+      }))));
+    }
+
+    document.getElementById('ffmpegProgress').style.width = '10%';
+
+    const resp = await fetch(`${cutterUrl}/cut`, {
+      method: 'POST',
+      body: formData
+    });
+
+    document.getElementById('ffmpegProgress').style.width = '80%';
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(`Cutter error: ${err.error || resp.status}`);
+    }
+
+    const result = await resp.json();
+    document.getElementById('ffmpegProgress').style.width = '100%';
+
+    log('info', `✓ Cut done in ${result.elapsedSec}s — ${result.sizeMB}MB`);
+    result.clips?.forEach((c, i) => {
+      log('info', `  Clip ${i+1}: ${formatTime(c.start)} → ${formatTime(c.end)} (${c.duration.toFixed(1)}s)`);
+    });
+
+    // Trigger download
+    const dlUrl = `${cutterUrl}${result.downloadUrl}`;
+    log('info', `Downloading from: ${dlUrl}`);
+    const a = document.createElement('a');
+    a.href = dlUrl;
+    a.download = `kaizer_highlights_${Date.now()}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setStatus('compositeStatus', 'done', `DONE — ${result.sizeMB}MB MP4`);
+
+  } catch(e) {
+    log('err', 'Cutter failed: ' + e.message);
+    setStatus('compositeStatus', 'error', 'ERROR — check CUTTER URL');
+  } finally {
+    document.getElementById('downloadRawBtn').disabled = false;
+    document.getElementById('ffmpegProgress').style.width = '0%';
+  }
+}
+
+// ── OPTION B (browser fallback) starts below — same recordClip logic ──
+async function downloadRawCuts_UNUSED_PLACEHOLDER() {
+  // kept for reference
+}
+
+// ── OPTION B: Browser MediaRecorder (fallback, no server needed) ──
+async function _browserRecordCuts() {
+  const selList = Array.from(selectedHighlights).sort((a,b)=>a-b).map(i => highlights[i]);
+  if (!selList.length || !rawFile) return;
+
+  document.getElementById('downloadIndivBtn').disabled = true;
+  setStatus('compositeStatus', 'running', `RECORDING CLIPS...`);
+  log('info', `Recording ${selList.length} clips in sequence (real-time)...`);
+  log('info', `Each clip records at actual playback speed. Total ~${Math.round(selList.reduce((a,h)=>a+(h.end_sec-h.start_sec),0))}s`);
+
+  // Show clip list
+  document.getElementById('clipList').style.display = '';
+  const listEl = document.getElementById('clipListItems');
+  listEl.innerHTML = '';
+  if (!window.__clips) window.__clips = [];
+
+  const vid = document.getElementById('sourceVideo');
+
+  const PREROLL = 3.0; // seconds before highlight start — accounts for Sarvam timestamp offset
+
+  for (let i = 0; i < selList.length; i++) {
+    const hl = selList[i];
+    const clipStart = Math.max(0, hl.start_sec - PREROLL);
+    const clipEnd = hl.end_sec;
+    const dur = (clipEnd - clipStart).toFixed(1);
+    const pct = (i / selList.length * 100);
+    document.getElementById('ffmpegProgress').style.width = pct + '%';
+    setStatus('compositeStatus', 'running', `CLIP ${i+1}/${selList.length} — ${dur}s`);
+    log('info', `Recording clip ${i+1}/${selList.length}: highlight ${formatTime(hl.start_sec)} → ${formatTime(hl.end_sec)} (+4s preroll +1.5s tail)`);
+
+    try {
+      const blob = await recordClip(vid, hl.start_sec, hl.end_sec, hl.telugu_text);
+      const sizeMB = (blob.size/1024/1024).toFixed(1);
+      const dlName = `kaizer_clip${i+1}_${formatTime(clipStart).replace(':','-')}.webm`;
+      window.__clips[i] = { blob, name: dlName };
+
+      // Add row to clip list
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);margin-bottom:4px;';
+      row.innerHTML = `
+        <div style="font-size:16px;font-weight:700;color:var(--gold);min-width:24px;">${i+1}</div>
+        <div style="flex:1;">
+          <div style="font-family:Noto Sans Telugu,sans-serif;font-size:13px;color:var(--text);margin-bottom:3px;">${hl.telugu_text.slice(0,70)}${hl.telugu_text.length>70?'...':''}</div>
+          <div style="font-size:10px;color:var(--text2);">${formatTime(hl.start_sec)} → ${formatTime(hl.end_sec)} · ${dur}s · ${sizeMB}MB · <span style="color:var(--green);">★ imp:${hl.importance}</span></div>
+        </div>
+        <button class="btn btn-secondary" style="font-size:10px;padding:6px 10px;" onclick="generateKaizerFrame(${i})">🖼 FRAME</button>
+        <button class="btn btn-gold" style="font-size:10px;padding:6px 14px;" onclick="triggerDownload(window.__clips[${i}].blob,'${dlName}')">⬇ DOWNLOAD</button>
+      `;
+      listEl.appendChild(row);
+      log('info', `  ✓ Clip ${i+1} ready — ${sizeMB}MB`);
+    } catch(e) {
+      log('err', `  ✗ Clip ${i+1} failed: ${e.message}`);
+    }
+  }
+
+  document.getElementById('ffmpegProgress').style.width = '100%';
+  setStatus('compositeStatus', 'done', `${selList.length} CLIPS READY`);
+  log('info', `✓ All clips recorded. Click ⬇ DOWNLOAD on each clip above.`);
+  document.getElementById('downloadRawBtn').disabled = false;
+}
+
+// ── KAIZER FRAME GENERATOR ──
+// Generates a 1080×1920 companion frame for any clip
+// Layout: top=video frame, middle=red strip+Telugu text, bottom=black
+function generateKaizerFrame(idx) {
+  const hl  = Array.from(selectedHighlights).sort((a,b)=>a-b).map(i=>highlights[i])[idx];
+  const vid = document.getElementById('videoPreview');
+  if (!hl || !vid) return;
+
+  const W = 1080, H = 1920;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  // Seek to highlight midpoint to grab frame
+  const seekTo = (hl.start_sec + hl.end_sec) / 2;
+  vid.pause();
+  vid.currentTime = seekTo;
+
+  vid.onseeked = () => {
+    vid.onseeked = null;
+
+    // ── TOP: video frame (68%) ──
+    const topH = Math.round(H * 0.68); // 1305px
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw video frame — scale+crop to fill top zone
+    const vw = vid.videoWidth  || 960;
+    const vh = vid.videoHeight || 540;
+    const scale = Math.max(W/vw, topH/vh);
+    const dw = vw*scale, dh = vh*scale;
+    const dx = (W-dw)/2, dy = (topH-dh)/2;
+    ctx.drawImage(vid, dx, dy, dw, dh);
+
+    // Subtle dark gradient over bottom of video for strip blend
+    const grad = ctx.createLinearGradient(0, topH-120, 0, topH+20);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.7)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, topH-120, W, 140);
+
+    // ── MIDDLE: red strip ──
+    const stripY = topH - 20;
+    const stripH = 200;
+    ctx.fillStyle = '#E50914';
+    ctx.fillRect(0, stripY, W, stripH);
+
+    // Torn top edge
+    ctx.fillStyle = '#000';
+    for (let x=0; x<W; x+=60) {
+      const rnd = 8 + Math.sin(x*0.08)*6;
+      ctx.beginPath();
+      ctx.moveTo(x, stripY);
+      ctx.quadraticCurveTo(x+30, stripY-rnd, x+60, stripY);
+      ctx.lineTo(x+60, stripY-14);
+      ctx.lineTo(x, stripY-14);
+      ctx.fill();
+    }
+    // Torn bottom edge
+    ctx.fillStyle = '#0a0a0a';
+    const stripBot = stripY + stripH;
+    for (let x=0; x<W; x+=60) {
+      const rnd = 8 + Math.cos(x*0.09)*5;
+      ctx.beginPath();
+      ctx.moveTo(x, stripBot);
+      ctx.quadraticCurveTo(x+30, stripBot+rnd, x+60, stripBot);
+      ctx.lineTo(x+60, stripBot+14);
+      ctx.lineTo(x, stripBot+14);
+      ctx.fill();
+    }
+
+    // Telugu text (only, no English line)
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+    ctx.shadowBlur = 10;
+
+    // Word-wrap Telugu text into 2 lines
+    ctx.font = 'bold 72px "Noto Sans Telugu", sans-serif';
+    const words = hl.telugu_text.split(' ');
+    let lines = [], line = '';
+    for (const w of words) {
+      const test = line + (line?' ':'') + w;
+      if (ctx.measureText(test).width > W-80 && line) { lines.push(line); line=w; }
+      else line = test;
+    }
+    if (line) lines.push(line);
+    lines = lines.slice(0,2); // max 2 lines
+
+    const lineH = 80;
+    const totalTxtH = lines.length * lineH;
+    const startY = stripY + (stripH - totalTxtH) / 2 + 60;
+    ctx.fillStyle = 'white';
+    lines.forEach((l,i) => ctx.fillText(l, W/2, startY + i*lineH));
+    ctx.shadowBlur = 0;
+
+    // ── BOTTOM: dark area ──
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(0, stripBot+14, W, H-(stripBot+14));
+
+    // Kaizer logo circle
+    ctx.beginPath();
+    ctx.arc(W-80, 80, 60, 0, Math.PI*2);
+    ctx.fillStyle = '#E50914';
+    ctx.fill();
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 22px Oswald, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('KAIZER', W-80, 70);
+    ctx.fillText('NEWS', W-80, 96);
+
+    // Download
+    const a = document.createElement('a');
+    a.download = `kaizer_frame_${idx+1}.png`;
+    a.href = canvas.toDataURL('image/png');
+    a.click();
+    log('info', `🖼 Frame ${idx+1} downloaded`);
+  };
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// Enable download buttons when highlights are selected
+function enableDownloadButtons() {
+  const hasSelection = selectedHighlights.size > 0 && rawFile;
+  document.getElementById('downloadRawBtn').disabled = !hasSelection;
+  document.getElementById('downloadIndivBtn').disabled = !hasSelection;
+}
+
+// ================================================================
+// CORS WARNING
+// ================================================================
+function showCorsWarning() {
+  const el = document.getElementById('corsWarning');
+  if (el) {
+    document.getElementById('compositeSection').style.display = '';
+    el.style.display = '';
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+// Use proxy URL if set, otherwise direct
+function getSarvamUrl() {
+  const proxy = (document.getElementById('proxyUrl')?.value || '').trim();
+  return proxy || 'https://api.sarvam.ai/speech-to-text';
+}
+
+// ================================================================
+// TITLE / DESCRIPTION / TAGS GENERATOR
+// ================================================================
+async function generateTitleDesc() {
+  const anthropicKey = document.getElementById('anthropicKey').value;
+  if (!anthropicKey || !highlights.length) return;
+
+  setStatus('titledescStatus', 'running', 'GENERATING...');
+  document.getElementById('generateMetaBtn').disabled = true;
+
+  const selList = selectedHighlights.size > 0
+    ? Array.from(selectedHighlights).map(i => highlights[i])
+    : highlights;
+
+  const highlightSummary = selList.map((h, i) =>
+    `${i+1}. [${h.type.toUpperCase()}] importance:${h.importance}/5\n   Telugu: ${h.telugu_text}\n   Reason: ${h.reason}`
+  ).join('\n\n');
+
+  const prompt = `You are a YouTube SEO expert for Kaizer News Telugu — a Telugu political news channel in Hyderabad.
+
+Based on these video highlights, generate:
+1. A punchy YouTube TITLE in Telugu (max 70 chars) — use dramatic language, name the key politicians
+2. A YouTube TITLE in English (max 70 chars) — SEO optimized, transliterated if needed
+3. A YouTube DESCRIPTION (150-200 words) — Telugu first paragraph, English second paragraph. Include timestamps if possible. End with subscribe CTA.
+4. 15 YouTube TAGS as comma-separated list — mix of Telugu transliterated, English, politician names, topic keywords
+
+HIGHLIGHTS FROM VIDEO:
+${highlightSummary}
+
+Return ONLY valid JSON. No markdown. Format:
+{
+  "title_telugu": "...",
+  "title_english": "...",
+  "description": "...",
+  "tags": "tag1, tag2, tag3, ..."
+}`;
+
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1200,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    let raw = data.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const meta = JSON.parse(raw);
+
+    document.getElementById('metaTitle').textContent = meta.title_telugu || '';
+    document.getElementById('metaTitleEn').textContent = meta.title_english || '';
+    document.getElementById('metaDesc').textContent = meta.description || '';
+    document.getElementById('metaTags').textContent = meta.tags || '';
+
+    document.getElementById('metaOutput').style.display = '';
+    setStatus('titledescStatus', 'done', 'DONE');
+    log('info', `✓ Title & description generated`);
+    log('info', `  Telugu title: ${meta.title_telugu}`);
+
+  } catch(e) {
+    setStatus('titledescStatus', 'error', 'ERROR');
+    log('err', 'Title/desc generation failed: ' + e.message);
+  } finally {
+    document.getElementById('generateMetaBtn').disabled = false;
+  }
+}
+
+function copyText(elId) {
+  const text = document.getElementById(elId)?.textContent || '';
+  navigator.clipboard.writeText(text).then(() => {
+    log('info', `✓ Copied to clipboard (${text.slice(0,40)}...)`);
+  }).catch(() => {
+    // Fallback
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    log('info', `✓ Copied`);
+  });
+}
+
+// ================================================================
+// HELPERS
+// ================================================================
+function setStepActive(id, state) {
+  const el = document.getElementById(id);
+  el.className = 'step ' + state;
+  if (state === 'done') {
+    el.querySelector('.step-num').textContent = '✓';
+  }
+}
+
+function setStatus(id, type, text) {
+  const el = document.getElementById(id);
+  const iconMap = { idle: '', running: '<div class="spinner"></div>', done: '✓', error: '✗' };
+  el.innerHTML = `${iconMap[type] || ''} ${text}`;
+  el.className = `status-chip ${type}`;
+}
+
+function log(type, msg) {
+  const box = document.getElementById('logBox');
+  if (!box) return;
+  const line = document.createElement('div');
+  line.className = `log-line ${type}`;
+  const ts = new Date().toLocaleTimeString('en-IN', { hour12: false, timeZone: 'Asia/Kolkata' });
+  line.textContent = `[${ts}] ${msg}`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+</script>
+</body>
+</html>
